@@ -80,8 +80,8 @@ class TrackCard extends StatelessWidget {
               children: [
                 const Text('Mute'),
                 Switch(
-                  value: track.hasAudio && track.isMuted,
-                  onChanged: track.hasAudio ? (_) => onToggleMute() : null,
+                  value: track.canMute && track.isMuted,
+                  onChanged: track.canMute ? (_) => onToggleMute() : null,
                 ),
               ],
             ),
