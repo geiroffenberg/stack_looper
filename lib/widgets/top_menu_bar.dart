@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../constants/app_constants.dart';
 import '../models/looper_state.dart';
 
 class TopMenuBar extends StatefulWidget {
@@ -66,6 +67,10 @@ class _TopMenuBarState extends State<TopMenuBar> {
       _bpmController.text = widget.bpm.toString();
       return;
     }
+    if (parsed < AppConstants.minBpm || parsed > AppConstants.maxBpm) {
+      _bpmController.text = widget.bpm.toString();
+      return;
+    }
     widget.onBpmChanged(parsed);
   }
 
@@ -107,7 +112,6 @@ class _TopMenuBarState extends State<TopMenuBar> {
                 ],
                 decoration: const InputDecoration(
                   isDense: true,
-                  hintText: '120',
                   contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
                 ),
                 onSubmitted: _submitBpm,

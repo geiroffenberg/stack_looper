@@ -16,6 +16,13 @@ class LooperScreen extends StatefulWidget {
 
 class _LooperScreenState extends State<LooperScreen>
     with SingleTickerProviderStateMixin {
+  static const int _beatsPerBar = 4; // Number of beats per bar (4/4 time).
+  // Guardrails for visual animation speed:
+  // - Min keeps very high BPM from becoming unreadably fast.
+  // - Max keeps very low BPM / long loops from becoming unresponsive.
+  static const int _minLoopDurationMs = 250;
+  static const int _maxLoopDurationMs = 120000;
+
   late final AnimationController _playheadController;
   TransportState? _lastTransportState;
   int? _lastBpm;
@@ -135,9 +142,11 @@ class _LooperScreenState extends State<LooperScreen>
   }
 
   Duration _loopPeriod(int bpm, int barCount) {
-    final double beatsPerSecond = bpm / 60;
-    final double beatsPerLoop = barCount * 4;
-    final int milliseconds = (beatsPerLoop / beatsPerSecond * 1000).round();
-    return Duration(milliseconds: milliseconds.clamp(250, 120000).toInt());
+    final int milliseconds = ((barCount * _beatsPerBar * 60000) / bpm).round();
+    return Duration(
+      milliseconds: milliseconds
+          .clamp(_minLoopDurationMs, _maxLoopDurationMs)
+          .toInt(),
+    );
   }
 }

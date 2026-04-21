@@ -3,6 +3,8 @@ class AppConstants {
 
   static const int maxTracks = 8;
   static const int defaultBpm = 120;
+  static const int minBpm = 60;
+  static const int maxBpm = 999;
   static const int defaultRepeatCount = 1;
   static const int defaultBarLength = 4;
 

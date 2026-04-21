@@ -44,7 +44,9 @@ class LooperProvider extends ChangeNotifier {
       _state.transportState == TransportState.recording || _state.emptyTrackCount > 0;
 
   void setBpm(int bpm) {
-    _state = _state.copyWith(bpm: bpm.clamp(1, 999).toInt());
+    _state = _state.copyWith(
+      bpm: bpm.clamp(AppConstants.minBpm, AppConstants.maxBpm),
+    );
     notifyListeners();
   }
 
@@ -55,7 +57,7 @@ class LooperProvider extends ChangeNotifier {
 
   void setNumTracksToRecord(int count) {
     final int maxSelectable = _maxSelectableTrackCount();
-    _state = _state.copyWith(numTracksToRecord: count.clamp(1, maxSelectable).toInt());
+    _state = _state.copyWith(numTracksToRecord: count.clamp(1, maxSelectable));
     notifyListeners();
   }
 
@@ -127,6 +129,7 @@ class LooperProvider extends ChangeNotifier {
       return;
     }
 
+    final bool wasPlaying = _state.transportState == TransportState.playing;
     final targets = _targetTrackIndexes();
     if (targets.isEmpty) {
       return;
@@ -158,7 +161,9 @@ class LooperProvider extends ChangeNotifier {
     );
     notifyListeners();
 
-    await _playAudibleTracks(_state.tracks);
+    if (!wasPlaying) {
+      await _playAudibleTracks(_state.tracks);
+    }
   }
 
   Future<void> deleteTrackAudio(int trackId) async {
@@ -189,7 +194,7 @@ class LooperProvider extends ChangeNotifier {
     ];
 
     final emptyTracks = ordered.where((i) => !_state.tracks[i].hasAudio).toList();
-    final int desiredCount = _state.numTracksToRecord.clamp(1, emptyTracks.length).toInt();
+    final int desiredCount = _state.numTracksToRecord.clamp(1, emptyTracks.length);
     return emptyTracks.take(desiredCount).toList();
   }
 
@@ -267,6 +272,6 @@ class LooperProvider extends ChangeNotifier {
   }
 
   int _maxSelectableTrackCount() {
-    return _state.emptyTrackCount.clamp(1, AppConstants.maxTracks).toInt();
+    return _state.emptyTrackCount.clamp(1, AppConstants.maxTracks);
   }
 }

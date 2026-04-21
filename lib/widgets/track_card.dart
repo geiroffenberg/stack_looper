@@ -122,6 +122,16 @@ class TrackCard extends StatelessWidget {
 }
 
 class _WaveformPainter extends CustomPainter {
+  // Two layered sine curves keep the placeholder waveform simple but organic.
+  static const double _primaryFrequency = 2.2; // Cycles per repeated segment.
+  static const double _primaryPhaseStep = 0.6; // Per-segment offset for variation.
+  static const double _secondaryFrequency = 5.0; // Higher detail cycles per segment.
+  static const double _secondaryPhaseStep = 0.4; // Secondary per-segment phase shift.
+  // Combined amplitudes define waveform height/energy in the track area.
+  static const double _primaryAmplitude = 0.5;
+  static const double _secondaryAmplitude = 0.25;
+  static const double _verticalScale = 0.32;
+
   const _WaveformPainter({
     required this.hasAudio,
     required this.visualBarDividers,
@@ -169,9 +179,13 @@ class _WaveformPainter extends CustomPainter {
           final double t = i / points;
           final double x = repeat * segmentWidth + t * segmentWidth;
           final double wave =
-              math.sin((t * 2 * math.pi * 2.2) + (repeat * 0.6)) * 0.5 +
-                  math.sin((t * 2 * math.pi * 5.0) + (repeat * 0.4)) * 0.25;
-          final double y = (size.height * 0.5) - (wave * size.height * 0.32);
+              math.sin((t * 2 * math.pi * _primaryFrequency) +
+                      (repeat * _primaryPhaseStep)) *
+                  _primaryAmplitude +
+                  math.sin((t * 2 * math.pi * _secondaryFrequency) +
+                      (repeat * _secondaryPhaseStep)) *
+                  _secondaryAmplitude;
+          final double y = (size.height * 0.5) - (wave * size.height * _verticalScale);
           if (i == 0) {
             path.moveTo(x, y);
           } else {
