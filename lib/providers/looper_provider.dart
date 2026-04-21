@@ -84,9 +84,7 @@ class LooperProvider extends ChangeNotifier {
         .map(
           (track) => !track.hasAudio
               ? track
-              : track.copyWith(
-                  state: track.isMuted ? TrackState.playing : TrackState.looping,
-                ),
+              : track.copyWith(state: TrackState.looping),
         )
         .toList(growable: false);
 
