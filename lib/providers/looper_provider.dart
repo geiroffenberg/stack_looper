@@ -107,6 +107,7 @@ class LooperProvider extends ChangeNotifier {
           (track) => !track.hasAudio
               ? track.copyWith(state: TrackState.empty, isMuted: false)
               : track.copyWith(
+                  // "Playing" represents a ready-to-play recorded track when transport is stopped.
                   state: TrackState.playing,
                   isMuted: track.isMuted,
                 ),
@@ -145,7 +146,7 @@ class LooperProvider extends ChangeNotifier {
         trackIndex,
         (t) => t.copyWith(
           hasAudio: true,
-          state: _state.repeatCount <= 1 ? TrackState.playing : TrackState.looping,
+          state: TrackState.playing,
         ),
       );
     }
