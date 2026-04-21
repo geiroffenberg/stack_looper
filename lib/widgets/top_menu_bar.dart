@@ -140,6 +140,10 @@ class _LabeledDropdown<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (options.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return ConstrainedBox(
       constraints: const BoxConstraints(minWidth: 96),
       child: Column(

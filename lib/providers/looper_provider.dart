@@ -33,7 +33,7 @@ class LooperProvider extends ChangeNotifier {
     if (empty <= 0) {
       return const [1];
     }
-    return List<int>.generate(empty.clamp(1, AppConstants.maxTracks), (i) => i + 1);
+    return List<int>.generate(empty, (i) => i + 1);
   }
 
   bool get canStartRecording =>
@@ -50,7 +50,7 @@ class LooperProvider extends ChangeNotifier {
   }
 
   void setNumTracksToRecord(int count) {
-    final int maxSelectable = _state.emptyTrackCount.clamp(1, AppConstants.maxTracks);
+    final int maxSelectable = _maxSelectableTrackCount();
     _state = _state.copyWith(numTracksToRecord: count.clamp(1, maxSelectable));
     notifyListeners();
   }
@@ -166,7 +166,7 @@ class LooperProvider extends ChangeNotifier {
       ),
     );
 
-    final int maxSelectable = _state.emptyTrackCount.clamp(1, AppConstants.maxTracks);
+    final int maxSelectable = _maxSelectableTrackCount();
     if (_state.numTracksToRecord > maxSelectable) {
       _state = _state.copyWith(numTracksToRecord: maxSelectable);
       notifyListeners();
@@ -190,5 +190,9 @@ class LooperProvider extends ChangeNotifier {
     updatedTracks[trackId] = update(updatedTracks[trackId]);
     _state = _state.copyWith(tracks: updatedTracks);
     notifyListeners();
+  }
+
+  int _maxSelectableTrackCount() {
+    return _state.emptyTrackCount.clamp(1, AppConstants.maxTracks);
   }
 }
