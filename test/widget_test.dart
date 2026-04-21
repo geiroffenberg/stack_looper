@@ -1,16 +1,18 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:stack_looper/main.dart';
+import 'package:stack_looper/widgets/track_card.dart';
 
 void main() {
-  testWidgets('renders looper scaffold with menu and tracks', (tester) async {
+  testWidgets('renders minimalist looper layout', (tester) async {
     await tester.pumpWidget(const MyApp());
 
-    expect(find.text('Stack Looper'), findsOneWidget);
-    expect(find.text('BPM'), findsOneWidget);
-    expect(find.text('Repeat'), findsOneWidget);
-    expect(find.text('Tracks'), findsOneWidget);
-    expect(find.text('Track 1'), findsOneWidget);
-    expect(find.text('Track 8'), findsOneWidget);
+    expect(find.text('Stack Looper'), findsNothing);
+    expect(find.byIcon(Icons.stop_rounded), findsNothing);
+    expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.fiber_manual_record_rounded), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.byType(TrackCard), findsNWidgets(8));
   });
 }

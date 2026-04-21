@@ -25,8 +25,12 @@ class LooperProvider extends ChangeNotifier {
 
   final AudioService _audioService;
   LooperState _state;
+  final Set<int> _activeRecordingTrackIds = <int>{};
 
   LooperState get state => _state;
+
+  int get visualBarDividers =>
+      _state.tracks.any((track) => track.barLength == 8) ? 8 : 4;
 
   List<int> get availableNumTracksToRecordOptions {
     final int empty = _state.emptyTrackCount;
@@ -37,10 +41,10 @@ class LooperProvider extends ChangeNotifier {
   }
 
   bool get canStartRecording =>
-      _state.transportState != TransportState.recording && _state.emptyTrackCount > 0;
+      _state.transportState == TransportState.recording || _state.emptyTrackCount > 0;
 
   void setBpm(int bpm) {
-    _state = _state.copyWith(bpm: bpm);
+    _state = _state.copyWith(bpm: bpm.clamp(1, 999).toInt());
     notifyListeners();
   }
 
@@ -51,7 +55,7 @@ class LooperProvider extends ChangeNotifier {
 
   void setNumTracksToRecord(int count) {
     final int maxSelectable = _maxSelectableTrackCount();
-    _state = _state.copyWith(numTracksToRecord: count.clamp(1, maxSelectable));
+    _state = _state.copyWith(numTracksToRecord: count.clamp(1, maxSelectable).toInt());
     notifyListeners();
   }
 
@@ -76,38 +80,30 @@ class LooperProvider extends ChangeNotifier {
   }
 
   Future<void> playAll() async {
-    if (!_state.hasRecordedTracks) {
+    if (_state.transportState == TransportState.stopped) {
+      if (!_state.hasRecordedTracks) {
+        return;
+      }
+      await _startPlayback();
       return;
     }
 
-    final List<Track> updated = _state.tracks
-        .map(
-          (track) => !track.hasAudio
-              ? track
-              : track.copyWith(state: TrackState.looping),
-        )
-        .toList(growable: false);
-
-    _state = _state.copyWith(
-      tracks: updated,
-      transportState: TransportState.playing,
-    );
-    notifyListeners();
-
-    for (final track in updated.where((t) => t.hasAudio && !t.isMuted)) {
-      await _audioService.playTrack(track.id, loop: true);
+    if (_state.transportState == TransportState.recording) {
+      await _stopRecording(continuePlayback: false);
     }
+
+    await stopAll();
   }
 
   Future<void> stopAll() async {
     await _audioService.stopAll();
 
+    _activeRecordingTrackIds.clear();
     final List<Track> updated = _state.tracks
         .map(
           (track) => !track.hasAudio
               ? track.copyWith(state: TrackState.empty, isMuted: false)
               : track.copyWith(
-                  // "Playing" represents a ready-to-play recorded track when transport is stopped.
                   state: TrackState.playing,
                   isMuted: track.isMuted,
                 ),
@@ -122,7 +118,12 @@ class LooperProvider extends ChangeNotifier {
   }
 
   Future<void> startRecordingSession() async {
-    if (!canStartRecording) {
+    if (_state.transportState == TransportState.recording) {
+      await _stopRecording(continuePlayback: true);
+      return;
+    }
+
+    if (_state.emptyTrackCount <= 0) {
       return;
     }
 
@@ -131,32 +132,39 @@ class LooperProvider extends ChangeNotifier {
       return;
     }
 
-    _state = _state.copyWith(transportState: TransportState.recording);
-    notifyListeners();
+    _activeRecordingTrackIds
+      ..clear()
+      ..addAll(targets);
 
     for (final trackIndex in targets) {
-      _state = _state.copyWith(selectedTrackIndex: trackIndex);
-      _updateTrack(trackIndex, (track) => track.copyWith(state: TrackState.recording));
-
       final track = _state.tracks[trackIndex];
       await _audioService.startTrackRecording(track.id, track.barLength, _state.bpm);
-      await _audioService.stopTrackRecording(track.id);
-
-      _updateTrack(
-        trackIndex,
-        (t) => t.copyWith(
-          hasAudio: true,
-          state: TrackState.playing,
-        ),
-      );
     }
 
-    _state = _state.copyWith(transportState: TransportState.stopped);
+    final List<Track> updatedTracks = _state.tracks
+        .map(
+          (track) => _activeRecordingTrackIds.contains(track.id)
+              ? track.copyWith(state: TrackState.recording)
+              : track.hasAudio
+                  ? track.copyWith(state: TrackState.looping)
+                  : track.copyWith(state: TrackState.empty),
+        )
+        .toList(growable: false);
+
+    _state = _state.copyWith(
+      tracks: updatedTracks,
+      selectedTrackIndex: targets.first,
+      transportState: TransportState.recording,
+    );
     notifyListeners();
+
+    await _playAudibleTracks(_state.tracks);
   }
 
   Future<void> deleteTrackAudio(int trackId) async {
     await _audioService.deleteTrack(trackId);
+    _activeRecordingTrackIds.remove(trackId);
+
     _updateTrack(
       trackId,
       (track) => track.copyWith(
@@ -181,8 +189,74 @@ class LooperProvider extends ChangeNotifier {
     ];
 
     final emptyTracks = ordered.where((i) => !_state.tracks[i].hasAudio).toList();
-    final int desiredCount = _state.numTracksToRecord.clamp(1, emptyTracks.length);
+    final int desiredCount = _state.numTracksToRecord.clamp(1, emptyTracks.length).toInt();
     return emptyTracks.take(desiredCount).toList();
+  }
+
+  Future<void> _startPlayback() async {
+    final List<Track> updated = _state.tracks
+        .map(
+          (track) => !track.hasAudio
+              ? track.copyWith(state: TrackState.empty)
+              : track.copyWith(state: TrackState.looping),
+        )
+        .toList(growable: false);
+
+    _state = _state.copyWith(
+      tracks: updated,
+      transportState: TransportState.playing,
+    );
+    notifyListeners();
+
+    await _playAudibleTracks(updated);
+  }
+
+  Future<void> _stopRecording({required bool continuePlayback}) async {
+    if (_activeRecordingTrackIds.isEmpty) {
+      _state = _state.copyWith(
+        transportState: continuePlayback ? TransportState.playing : TransportState.stopped,
+      );
+      notifyListeners();
+      return;
+    }
+
+    final Set<int> finalizedTrackIds = Set<int>.from(_activeRecordingTrackIds);
+    for (final trackId in finalizedTrackIds) {
+      await _audioService.stopTrackRecording(trackId);
+    }
+
+    final List<Track> updatedTracks = _state.tracks
+        .map(
+          (track) => finalizedTrackIds.contains(track.id)
+              ? track.copyWith(
+                  hasAudio: true,
+                  state: continuePlayback ? TrackState.looping : TrackState.playing,
+                )
+              : track.hasAudio
+                  ? track.copyWith(
+                      state: continuePlayback ? TrackState.looping : TrackState.playing,
+                    )
+                  : track.copyWith(state: TrackState.empty),
+        )
+        .toList(growable: false);
+
+    _activeRecordingTrackIds.clear();
+
+    _state = _state.copyWith(
+      tracks: updatedTracks,
+      transportState: continuePlayback ? TransportState.playing : TransportState.stopped,
+    );
+    notifyListeners();
+
+    if (continuePlayback) {
+      await _playAudibleTracks(updatedTracks);
+    }
+  }
+
+  Future<void> _playAudibleTracks(List<Track> tracks) async {
+    for (final track in tracks.where((t) => t.hasAudio && !t.isMuted)) {
+      await _audioService.playTrack(track.id, loop: true);
+    }
   }
 
   void _updateTrack(int trackId, Track Function(Track) update) {
@@ -193,6 +267,6 @@ class LooperProvider extends ChangeNotifier {
   }
 
   int _maxSelectableTrackCount() {
-    return _state.emptyTrackCount.clamp(1, AppConstants.maxTracks);
+    return _state.emptyTrackCount.clamp(1, AppConstants.maxTracks).toInt();
   }
 }
