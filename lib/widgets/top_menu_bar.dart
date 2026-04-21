@@ -1,25 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../constants/app_constants.dart';
 import '../models/looper_state.dart';
 
-class TopMenuBar extends StatelessWidget {
+class TopMenuBar extends StatefulWidget {
   const TopMenuBar({
     super.key,
     required this.transportState,
     required this.bpm,
     required this.repeatCount,
     required this.numTracksToRecord,
-    required this.bpmOptions,
     required this.repeatOptions,
     required this.numTrackOptions,
     required this.onPlay,
-    required this.onStop,
     required this.onRecord,
     required this.onBpmChanged,
     required this.onRepeatChanged,
     required this.onNumTracksChanged,
-    required this.canPlay,
-    required this.canStop,
     required this.canRecord,
   });
 
@@ -27,67 +25,110 @@ class TopMenuBar extends StatelessWidget {
   final int bpm;
   final int repeatCount;
   final int numTracksToRecord;
-  final List<int> bpmOptions;
   final List<int> repeatOptions;
   final List<int> numTrackOptions;
   final VoidCallback onPlay;
-  final VoidCallback onStop;
   final VoidCallback onRecord;
   final ValueChanged<int> onBpmChanged;
   final ValueChanged<int> onRepeatChanged;
   final ValueChanged<int> onNumTracksChanged;
-  final bool canPlay;
-  final bool canStop;
   final bool canRecord;
 
   @override
+  State<TopMenuBar> createState() => _TopMenuBarState();
+}
+
+class _TopMenuBarState extends State<TopMenuBar> {
+  late final TextEditingController _bpmController;
+
+  @override
+  void initState() {
+    super.initState();
+    _bpmController = TextEditingController(text: widget.bpm.toString());
+  }
+
+  @override
+  void didUpdateWidget(covariant TopMenuBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.bpm != widget.bpm && _bpmController.text != widget.bpm.toString()) {
+      _bpmController.text = widget.bpm.toString();
+    }
+  }
+
+  @override
+  void dispose() {
+    _bpmController.dispose();
+    super.dispose();
+  }
+
+  void _submitBpm(String value) {
+    final parsed = int.tryParse(value);
+    if (parsed == null) {
+      _bpmController.text = widget.bpm.toString();
+      return;
+    }
+    if (parsed < AppConstants.minBpm || parsed > AppConstants.maxBpm) {
+      _bpmController.text = widget.bpm.toString();
+      return;
+    }
+    widget.onBpmChanged(parsed);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final bool isRecording = widget.transportState == TransportState.recording;
+    final bool isPlaying = widget.transportState != TransportState.stopped;
+
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          crossAxisAlignment: WrapCrossAlignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
           children: [
-            _MenuButton(
-              icon: Icons.play_arrow_rounded,
-              isActive: transportState == TransportState.playing,
-              enabled: canPlay,
-              onPressed: onPlay,
-            ),
-            _MenuButton(
-              icon: Icons.stop_rounded,
-              isActive: transportState == TransportState.stopped,
-              enabled: canStop,
-              onPressed: onStop,
-            ),
-            _MenuButton(
+            _TransportButton(
               icon: Icons.fiber_manual_record_rounded,
-              isActive: transportState == TransportState.recording,
-              enabled: canRecord,
-              onPressed: onRecord,
+              isActive: isRecording,
+              activeColor: Colors.red,
+              enabled: widget.canRecord,
+              onPressed: widget.onRecord,
             ),
-            _LabeledDropdown<int>(
-              label: 'BPM',
-              value: bpm,
-              options: bpmOptions,
-              toLabel: (v) => '$v',
-              onChanged: onBpmChanged,
+            const SizedBox(width: 8),
+            _TransportButton(
+              icon: Icons.play_arrow_rounded,
+              isActive: isPlaying,
+              activeColor: Colors.green,
+              enabled: true,
+              onPressed: widget.onPlay,
             ),
-            _LabeledDropdown<int>(
-              label: 'Repeat',
-              value: repeatCount,
-              options: repeatOptions,
-              toLabel: (v) => '$v',
-              onChanged: onRepeatChanged,
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 64,
+              child: TextField(
+                controller: _bpmController,
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(3),
+                ],
+                decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                ),
+                onSubmitted: _submitBpm,
+                onTapOutside: (_) => _submitBpm(_bpmController.text),
+              ),
             ),
-            _LabeledDropdown<int>(
-              label: 'Tracks',
-              value: numTracksToRecord,
-              options: numTrackOptions,
-              toLabel: (v) => '$v',
-              onChanged: onNumTracksChanged,
+            const Spacer(),
+            _CompactDropdown(
+              value: widget.repeatCount,
+              options: widget.repeatOptions,
+              onChanged: widget.onRepeatChanged,
+            ),
+            const SizedBox(width: 8),
+            _CompactDropdown(
+              value: widget.numTracksToRecord,
+              options: widget.numTrackOptions,
+              onChanged: widget.onNumTracksChanged,
             ),
           ],
         ),
@@ -96,16 +137,18 @@ class TopMenuBar extends StatelessWidget {
   }
 }
 
-class _MenuButton extends StatelessWidget {
-  const _MenuButton({
+class _TransportButton extends StatelessWidget {
+  const _TransportButton({
     required this.icon,
     required this.isActive,
+    required this.activeColor,
     required this.enabled,
     required this.onPressed,
   });
 
   final IconData icon;
   final bool isActive;
+  final Color activeColor;
   final bool enabled;
   final VoidCallback onPressed;
 
@@ -114,29 +157,23 @@ class _MenuButton extends StatelessWidget {
     return IconButton.filledTonal(
       onPressed: enabled ? onPressed : null,
       style: IconButton.styleFrom(
-        backgroundColor: isActive
-            ? Theme.of(context).colorScheme.primary.withOpacity(0.25)
-            : null,
+        backgroundColor: isActive ? activeColor.withOpacity(0.28) : null,
       ),
-      icon: Icon(icon),
+      icon: Icon(icon, color: isActive ? activeColor : null),
     );
   }
 }
 
-class _LabeledDropdown<T> extends StatelessWidget {
-  const _LabeledDropdown({
-    required this.label,
+class _CompactDropdown extends StatelessWidget {
+  const _CompactDropdown({
     required this.value,
     required this.options,
-    required this.toLabel,
     required this.onChanged,
   });
 
-  final String label;
-  final T value;
-  final List<T> options;
-  final String Function(T) toLabel;
-  final ValueChanged<T> onChanged;
+  final int value;
+  final List<int> options;
+  final ValueChanged<int> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -144,31 +181,25 @@ class _LabeledDropdown<T> extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 96),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.labelSmall),
-          const SizedBox(height: 4),
-          DropdownButtonFormField<T>(
-            value: options.contains(value) ? value : options.first,
-            items: options
-                .map(
-                  (option) => DropdownMenuItem<T>(
-                    value: option,
-                    child: Text(toLabel(option)),
-                  ),
-                )
-                .toList(growable: false),
-            onChanged: (updated) {
-              if (updated != null) {
-                onChanged(updated);
-              }
-            },
-          ),
-        ],
+    return SizedBox(
+      width: 60,
+      child: DropdownButtonFormField<int>(
+        isDense: true,
+        value: options.contains(value) ? value : options.first,
+        decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
+        items: options
+            .map(
+              (option) => DropdownMenuItem<int>(
+                value: option,
+                child: Center(child: Text('$option')),
+              ),
+            )
+            .toList(growable: false),
+        onChanged: (updated) {
+          if (updated != null) {
+            onChanged(updated);
+          }
+        },
       ),
     );
   }
