@@ -7,6 +7,7 @@ class Track {
     this.hasAudio = false,
     this.isMuted = false,
     this.state = TrackState.empty,
+    this.waveformPeaks = const <double>[],
   });
 
   final int id;
@@ -14,6 +15,7 @@ class Track {
   final bool hasAudio;
   final bool isMuted;
   final TrackState state;
+  final List<double> waveformPeaks;
 
   bool get canMute => hasAudio;
 
@@ -23,6 +25,7 @@ class Track {
     bool? hasAudio,
     bool? isMuted,
     TrackState? state,
+    List<double>? waveformPeaks,
   }) {
     return Track(
       id: id ?? this.id,
@@ -30,6 +33,7 @@ class Track {
       hasAudio: hasAudio ?? this.hasAudio,
       isMuted: isMuted ?? this.isMuted,
       state: state ?? this.state,
+      waveformPeaks: waveformPeaks ?? this.waveformPeaks,
     );
   }
 }

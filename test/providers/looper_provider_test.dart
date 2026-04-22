@@ -24,27 +24,37 @@ class _FakeAudioService implements AudioService {
 
   @override
   Future<void> stopTrackRecording(int trackId) async {}
+
+  @override
+  Future<bool> hasRecordedAudio(int trackId) async => false;
+
+  @override
+  Future<void> playClick() async {}
 }
 
 void main() {
-  test('record toggle keeps playback running until play stops all', () async {
+  test('startRecordingSession transitions to countIn', () async {
     final provider = LooperProvider(audioService: _FakeAudioService());
 
     await provider.startRecordingSession();
-    expect(provider.state.transportState, TransportState.recording);
+    expect(provider.state.transportState, TransportState.countIn);
+  });
+
+  test('pressing record during countIn cancels and stops', () async {
+    final provider = LooperProvider(audioService: _FakeAudioService());
 
     await provider.startRecordingSession();
-    expect(provider.state.transportState, TransportState.playing);
+    expect(provider.state.transportState, TransportState.countIn);
 
-    await provider.playAll();
+    await provider.startRecordingSession();
     expect(provider.state.transportState, TransportState.stopped);
   });
 
-  test('play while recording stops both recording and playback', () async {
+  test('pressing play during countIn cancels and stops', () async {
     final provider = LooperProvider(audioService: _FakeAudioService());
 
     await provider.startRecordingSession();
-    expect(provider.state.transportState, TransportState.recording);
+    expect(provider.state.transportState, TransportState.countIn);
 
     await provider.playAll();
     expect(provider.state.transportState, TransportState.stopped);

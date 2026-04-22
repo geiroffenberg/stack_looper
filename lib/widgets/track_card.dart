@@ -48,25 +48,11 @@ class TrackCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Container(
-                  width: 20,
-                  height: 20,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  ),
-                  child: Text(
-                    '${track.id + 1}',
-                    style: Theme.of(context).textTheme.labelSmall,
-                  ),
-                ),
-                const SizedBox(width: 8),
                 SizedBox(
-                  width: 56,
+                  width: 64,
                   child: DropdownButtonFormField<int>(
                     isDense: true,
-                    value: track.barLength,
+                    initialValue: track.barLength,
                     decoration: const InputDecoration(
                       contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                     ),
@@ -103,6 +89,8 @@ class TrackCard extends StatelessWidget {
                 child: CustomPaint(
                   painter: _WaveformPainter(
                     hasAudio: track.hasAudio,
+                    isRecording: track.state == TrackState.recording,
+                    waveformPeaks: track.waveformPeaks,
                     visualBarDividers: visualBarDividers,
                     trackBarLength: track.barLength,
                     playheadProgress: playheadProgress,
@@ -122,18 +110,10 @@ class TrackCard extends StatelessWidget {
 }
 
 class _WaveformPainter extends CustomPainter {
-  // Two layered sine curves keep the placeholder waveform simple but organic.
-  static const double _primaryFrequency = 2.2; // Cycles per repeated segment.
-  static const double _primaryPhaseStep = 0.6; // Per-segment offset for variation.
-  static const double _secondaryFrequency = 5.0; // Higher detail cycles per segment.
-  static const double _secondaryPhaseStep = 0.4; // Secondary per-segment phase shift.
-  // Combined amplitudes define waveform height/energy in the track area.
-  static const double _primaryAmplitude = 0.5;
-  static const double _secondaryAmplitude = 0.25;
-  static const double _verticalScale = 0.32;
-
   const _WaveformPainter({
     required this.hasAudio,
+    required this.isRecording,
+    required this.waveformPeaks,
     required this.visualBarDividers,
     required this.trackBarLength,
     required this.playheadProgress,
@@ -143,6 +123,8 @@ class _WaveformPainter extends CustomPainter {
   });
 
   final bool hasAudio;
+  final bool isRecording;
+  final List<double> waveformPeaks;
   final int visualBarDividers;
   final int trackBarLength;
   final double playheadProgress;
@@ -155,6 +137,9 @@ class _WaveformPainter extends CustomPainter {
     final Paint bgPaint = Paint()..color = Colors.white.withOpacity(0.02);
     canvas.drawRect(Offset.zero & size, bgPaint);
 
+    final double laneWidth = size.width *
+        (trackBarLength / math.max(1, visualBarDividers)).clamp(0.0, 1.0);
+
     final Paint dividerPaint = Paint()
       ..color = dividerColor.withOpacity(0.5)
       ..strokeWidth = 1;
@@ -163,50 +148,69 @@ class _WaveformPainter extends CustomPainter {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), dividerPaint);
     }
 
-    if (hasAudio) {
+    if (hasAudio && waveformPeaks.isNotEmpty) {
       final Paint waveformPaint = Paint()
-        ..color = waveformColor.withOpacity(0.75)
-        ..strokeWidth = 1.5
-        ..style = PaintingStyle.stroke;
+        ..color = waveformColor.withOpacity(0.78)
+        ..strokeCap = StrokeCap.round;
+      final int count = waveformPeaks.length;
+      final double gap = 1.0;
+      final double barWidth =
+          math.max(1.2, (laneWidth - ((count - 1) * gap)) / count);
+      for (int i = 0; i < count; i++) {
+        final double peak = waveformPeaks[i].clamp(0.0, 1.0);
+        final double height = size.height * (0.12 + (peak * 0.76));
+        final double top = (size.height - height) * 0.5;
+        final double x = i * (barWidth + gap) + (barWidth * 0.5);
+        waveformPaint.strokeWidth = barWidth;
+        canvas.drawLine(Offset(x, top), Offset(x, top + height), waveformPaint);
+      }
+    }
 
-      final int repeats = math.max(1, visualBarDividers ~/ trackBarLength);
-      final double segmentWidth = size.width / repeats;
-      final int points = math.max(18, (segmentWidth / 5).floor());
+    if (isRecording) {
+      final int desiredBars = math.max(16, trackBarLength * 32);
+      final int barCount =
+          math.min(desiredBars, math.max(16, (laneWidth / 3).floor()));
+      final double gap = 1.5;
+      final double barWidth =
+          math.max(1.5, (laneWidth - ((barCount - 1) * gap)) / barCount);
+      final double progressX = size.width * playheadProgress.clamp(0.0, 1.0).toDouble();
+      final Paint recordedBarPaint = Paint()
+        ..color = const Color(0xFFE53935).withOpacity(0.28)
+        ..strokeCap = StrokeCap.round;
+      final Paint pendingBarPaint = Paint()
+        ..color = const Color(0xFFE53935).withOpacity(0.12)
+        ..strokeCap = StrokeCap.round;
 
-      for (int repeat = 0; repeat < repeats; repeat++) {
-        final Path path = Path();
-        for (int i = 0; i <= points; i++) {
-          final double t = i / points;
-          final double x = repeat * segmentWidth + t * segmentWidth;
-          final double wave =
-              math.sin((t * 2 * math.pi * _primaryFrequency) +
-                      (repeat * _primaryPhaseStep)) *
-                  _primaryAmplitude +
-                  math.sin((t * 2 * math.pi * _secondaryFrequency) +
-                      (repeat * _secondaryPhaseStep)) *
-                  _secondaryAmplitude;
-          final double y = (size.height * 0.5) - (wave * size.height * _verticalScale);
-          if (i == 0) {
-            path.moveTo(x, y);
-          } else {
-            path.lineTo(x, y);
-          }
-        }
-        canvas.drawPath(path, waveformPaint);
+      for (int i = 0; i < barCount; i++) {
+        final double x = i * (barWidth + gap) + (barWidth * 0.5);
+        final double phase = (i / math.max(1, barCount - 1)) * math.pi * 6.0;
+        final double envelope = 0.35 + 0.65 * ((math.sin(phase) + 1.0) * 0.5);
+        final double detail = 0.2 + 0.8 * ((math.sin((phase * 1.9) + 0.7) + 1.0) * 0.5);
+        final double height = size.height * (0.16 + (0.56 * envelope * detail));
+        final double top = (size.height - height) * 0.5;
+        final Paint paint = x <= progressX ? recordedBarPaint : pendingBarPaint;
+        paint.strokeWidth = barWidth;
+        canvas.drawLine(Offset(x, top), Offset(x, top + height), paint);
       }
     }
 
     final Paint playheadPaint = Paint()
-      ..color = playheadColor
+      ..color = isRecording ? const Color(0xFFE53935) : playheadColor
       ..strokeWidth = 2;
     final double clampedProgress = playheadProgress.clamp(0.0, 1.0).toDouble();
     final double playheadX = size.width * clampedProgress;
-    canvas.drawLine(Offset(playheadX, 0), Offset(playheadX, size.height), playheadPaint);
+    
+    // Only draw playhead if track has audio or is currently recording
+    if (hasAudio || isRecording) {
+      canvas.drawLine(Offset(playheadX, 0), Offset(playheadX, size.height), playheadPaint);
+    }
   }
 
   @override
   bool shouldRepaint(covariant _WaveformPainter oldDelegate) {
     return oldDelegate.hasAudio != hasAudio ||
+        oldDelegate.isRecording != isRecording ||
+      oldDelegate.waveformPeaks != waveformPeaks ||
         oldDelegate.visualBarDividers != visualBarDividers ||
         oldDelegate.trackBarLength != trackBarLength ||
         oldDelegate.playheadProgress != playheadProgress ||

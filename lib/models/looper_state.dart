@@ -1,6 +1,6 @@
 import 'track.dart';
 
-enum TransportState { stopped, playing, recording }
+enum TransportState { stopped, countIn, playing, recording }
 
 class LooperState {
   const LooperState({

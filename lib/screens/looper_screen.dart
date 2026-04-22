@@ -5,6 +5,7 @@ import '../constants/app_constants.dart';
 import '../models/looper_state.dart';
 import '../providers/looper_provider.dart';
 import '../widgets/top_menu_bar.dart';
+import '../widgets/settings_bar.dart';
 import '../widgets/track_card.dart';
 
 class LooperScreen extends StatefulWidget {
@@ -60,39 +61,43 @@ class _LooperScreenState extends State<LooperScreen>
                 children: [
                   TopMenuBar(
                     transportState: state.transportState,
-                    bpm: state.bpm,
-                    repeatCount: state.repeatCount,
-                    numTracksToRecord: state.numTracksToRecord,
-                    repeatOptions: AppConstants.repeatValues,
-                    numTrackOptions: provider.availableNumTracksToRecordOptions,
                     onPlay: provider.playAll,
                     onRecord: provider.startRecordingSession,
-                    onBpmChanged: provider.setBpm,
-                    onRepeatChanged: provider.setRepeatCount,
-                    onNumTracksChanged: provider.setNumTracksToRecord,
                     canRecord: provider.canStartRecording,
+                    beatFlash: provider.beatFlash,
+                    onSettingsPressed: () {
+                      // TODO: Implement settings menu
+                    },
                   ),
                   const SizedBox(height: 8),
                   Expanded(
                     child: AnimatedBuilder(
                       animation: _playheadController,
                       builder: (context, _) {
-                        final double playheadProgress =
-                            state.transportState == TransportState.stopped
-                                ? 0
-                                : _playheadController.value;
+                        final double globalPlayheadProgress =
+                            (state.transportState == TransportState.playing ||
+                                    state.transportState ==
+                                        TransportState.recording)
+                                ? _playheadController.value
+                                : 0;
 
                         return ListView.builder(
                           itemCount: state.tracks.length,
                           itemBuilder: (context, index) {
                             final track = state.tracks[index];
+                            final double trackPlayheadProgress =
+                                _trackPlayheadProgress(
+                              globalProgress: globalPlayheadProgress,
+                              visualBarDividers: visualBarDividers,
+                              trackBarLength: track.barLength,
+                            );
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 10),
                               child: TrackCard(
                                 track: track,
                                 isSelected: state.selectedTrackIndex == index,
                                 visualBarDividers: visualBarDividers,
-                                playheadProgress: playheadProgress,
+                                playheadProgress: trackPlayheadProgress,
                                 onSelect: () => provider.selectTrack(index),
                                 onDelete: () => provider.deleteTrackAudio(index),
                                 onToggleMute: () => provider.toggleMute(index),
@@ -104,6 +109,17 @@ class _LooperScreenState extends State<LooperScreen>
                         );
                       },
                     ),
+                  ),
+                  const SizedBox(height: 8),
+                  SettingsBar(
+                    bpm: state.bpm,
+                    repeatCount: state.repeatCount,
+                    numTracksToRecord: state.numTracksToRecord,
+                    repeatOptions: AppConstants.repeatValues,
+                    numTrackOptions: provider.availableNumTracksToRecordOptions,
+                    onBpmChanged: provider.setBpm,
+                    onRepeatChanged: provider.setRepeatCount,
+                    onNumTracksChanged: provider.setNumTracksToRecord,
                   ),
                 ],
               ),
@@ -119,7 +135,9 @@ class _LooperScreenState extends State<LooperScreen>
     required int bpm,
     required int visualBarDividers,
   }) {
-    final bool isPlaying = state.transportState != TransportState.stopped;
+    // Only animate the playhead when actually playing or recording, not during count-in
+    final bool isPlaying = state.transportState == TransportState.playing ||
+        state.transportState == TransportState.recording;
     final bool changedTransport = _lastTransportState != state.transportState;
     final bool changedTempo = _lastBpm != bpm || _lastVisualDividers != visualBarDividers;
 
@@ -148,5 +166,19 @@ class _LooperScreenState extends State<LooperScreen>
           .clamp(_minLoopDurationMs, _maxLoopDurationMs)
           .toInt(),
     );
+  }
+
+  // Converts one global transport phase into a track-local playhead position.
+  // A 1-bar track inside a 4-bar session resets 4x while a 4-bar track resets once.
+  double _trackPlayheadProgress({
+    required double globalProgress,
+    required int visualBarDividers,
+    required int trackBarLength,
+  }) {
+    final int safeDividers = visualBarDividers <= 0 ? 1 : visualBarDividers;
+    final int safeTrackBars = trackBarLength <= 0 ? 1 : trackBarLength;
+    final double globalBars = globalProgress.clamp(0.0, 1.0) * safeDividers;
+    final double localBars = globalBars % safeTrackBars;
+    return (localBars / safeDividers).clamp(0.0, 1.0);
   }
 }
