@@ -15,6 +15,8 @@ class TrackCard extends StatelessWidget {
     required this.isArmed,
     required this.armedBlinkOn,
     required this.onDelete,
+    required this.onToggleDelaySend,
+    required this.onToggleReverbSend,
     required this.onToggleMute,
     required this.onBarLengthChanged,
   });
@@ -26,14 +28,17 @@ class TrackCard extends StatelessWidget {
   final bool isArmed;
   final bool armedBlinkOn;
   final VoidCallback onDelete;
+  final VoidCallback onToggleDelaySend;
+  final VoidCallback onToggleReverbSend;
   final VoidCallback onToggleMute;
   final ValueChanged<int> onBarLengthChanged;
 
   @override
   Widget build(BuildContext context) {
+    final Color selectedBorderColor = const Color(0xFF7DD3FC);
     final borderColor = isSelected
-        ? Theme.of(context).colorScheme.primary
-        : Theme.of(context).dividerColor.withOpacity(0.3);
+        ? selectedBorderColor
+        : Theme.of(context).dividerColor.withOpacity(0.72);
 
     return GestureDetector(
       onLongPress: onDelete,
@@ -42,8 +47,17 @@ class TrackCard extends StatelessWidget {
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: borderColor, width: 1.5),
+          border: Border.all(color: borderColor, width: isSelected ? 2 : 1.5),
           color: Theme.of(context).cardTheme.color,
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: selectedBorderColor.withOpacity(0.18),
+                    blurRadius: 14,
+                    spreadRadius: 0.5,
+                  ),
+                ]
+              : null,
         ),
         child: Column(
           children: [
@@ -73,6 +87,18 @@ class TrackCard extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
+                _TrackHeaderToggle(
+                  tooltip: 'Delay send',
+                  label: 'DLY',
+                  isActive: track.delaySendEnabled,
+                  onPressed: onToggleDelaySend,
+                ),
+                _TrackHeaderToggle(
+                  tooltip: 'Reverb send',
+                  label: 'REV',
+                  isActive: track.reverbSendEnabled,
+                  onPressed: onToggleReverbSend,
+                ),
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   onPressed: track.canMute ? onToggleMute : null,
@@ -112,6 +138,56 @@ class TrackCard extends StatelessWidget {
   }
 }
 
+class _TrackHeaderToggle extends StatelessWidget {
+  const _TrackHeaderToggle({
+    required this.tooltip,
+    required this.label,
+    required this.isActive,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final String label;
+  final bool isActive;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color activeColor = Theme.of(context).colorScheme.primary;
+    final Color inactiveColor = Theme.of(context).dividerColor.withOpacity(0.75);
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Tooltip(
+        message: tooltip,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: onPressed,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: isActive ? activeColor.withOpacity(0.85) : inactiveColor,
+                width: 1,
+              ),
+              color: isActive ? activeColor.withOpacity(0.18) : Colors.transparent,
+            ),
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: isActive
+                        ? activeColor
+                        : Theme.of(context).textTheme.labelSmall?.color?.withOpacity(0.72),
+                  ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _WaveformPainter extends CustomPainter {
   const _WaveformPainter({
     required this.hasAudio,
@@ -141,14 +217,14 @@ class _WaveformPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint bgPaint = Paint()..color = Colors.white.withOpacity(0.02);
+    final Paint bgPaint = Paint()..color = const Color(0xFF0D1420).withOpacity(0.55);
     canvas.drawRect(Offset.zero & size, bgPaint);
 
     final double laneWidth = size.width *
         (trackBarLength / math.max(1, visualBarDividers)).clamp(0.0, 1.0);
 
     final Paint dividerPaint = Paint()
-      ..color = dividerColor.withOpacity(0.5)
+      ..color = dividerColor.withOpacity(0.72)
       ..strokeWidth = 1;
     for (int i = 1; i < visualBarDividers; i++) {
       final x = (size.width / visualBarDividers) * i;

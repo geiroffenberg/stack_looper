@@ -13,7 +13,7 @@ namespace stack_looper {
 // Maximum number of simultaneously-loaded tracks. Bumping this is cheap but
 // each track pre-allocates kMaxTrackSeconds * sample_rate floats so pick a
 // sensible value.
-constexpr int kMaxTracks = 4;
+constexpr int kMaxTracks = 6;
 constexpr int kMaxTrackSeconds = 30;
 
 // Lock-free SPSC (single-producer/single-consumer) ring buffer of floats.
@@ -112,6 +112,58 @@ class Engine : public oboe::AudioStreamDataCallback,
   void StartMetronome();
   void StopMetronome();
   void SetMetronomeAudible(bool audible);
+  void SetMasterOutputGainDb(float db);
+  float MasterOutputGainDb() const;
+  void SetLimiterCeilingDb(float db);
+  float LimiterCeilingDb() const;
+  void SetTrackOutputGainDb(int32_t track_id, float db);
+  float TrackOutputGainDb(int32_t track_id) const;
+  void SetTrackDelaySendEnabled(int32_t track_id, bool enabled);
+  bool TrackDelaySendEnabled(int32_t track_id) const;
+  void SetTrackReverbSendEnabled(int32_t track_id, bool enabled);
+  bool TrackReverbSendEnabled(int32_t track_id) const;
+  void SetHighPassHz(float hz);
+  float HighPassHz() const;
+  void SetLowPassHz(float hz);
+  float LowPassHz() const;
+  void SetEqLowDb(float db);
+  float EqLowDb() const;
+  void SetEqMidDb(float db);
+  float EqMidDb() const;
+  void SetEqHighDb(float db);
+  float EqHighDb() const;
+  void SetCompressorAmount(float amount);
+  float CompressorAmount() const;
+  void SetDistortionAmount(float amount);
+  float DistortionAmount() const;
+  void SetSaturationAmount(float amount);
+  float SaturationAmount() const;
+  void SetDelaySend(float amount);
+  float DelaySend() const;
+  void SetDelayDivision(int32_t division);
+  int32_t DelayDivision() const;
+  void SetDelayFeel(int32_t feel);
+  int32_t DelayFeel() const;
+  void SetReverbSend(float amount);
+  float ReverbSend() const;
+  void SetReverbRoomSize(float amount);
+  float ReverbRoomSize() const;
+  void SetDjFilterAmount(float amount);
+  float DjFilterAmount() const;
+  void SetDjFilterResonance(float amount);
+  float DjFilterResonance() const;
+  void SetBeatRepeatMix(float amount);
+  float BeatRepeatMix() const;
+  void SetBeatRepeatDivision(int32_t division);
+  int32_t BeatRepeatDivision() const;
+  void SetTransGateAmount(float amount);
+  float TransGateAmount() const;
+  void SetTransGateDivision(int32_t division);
+  int32_t TransGateDivision() const;
+  void SetNoiseRiserAmount(float amount);
+  float NoiseRiserAmount() const;
+  void SetTapeStopAmount(float amount);
+  float TapeStopAmount() const;
 
   // Transport position (master sample clock). Useful for Dart to schedule
   // recording "N beats from now" without guessing.
@@ -218,6 +270,79 @@ class Engine : public oboe::AudioStreamDataCallback,
   // We only need one voice at a time because clicks don't overlap at musical
   // tempi, but the render loop is written so extending to N voices is trivial.
   int32_t click_voice_pos_ = 1 << 30;  // inactive sentinel
+
+  // ---- Master FX output ---------------------------------------------------
+  // Target gain set by control/UI threads, consumed by the audio thread.
+  std::atomic<float> master_output_gain_target_{1.0f};
+  // Audio-thread smoothed gain to avoid zipper noise while sliders move.
+  float master_output_gain_smoothed_ = 1.0f;
+  // Per-track output gains (target + smoothed) for mixer-style volume strips.
+  std::array<std::atomic<float>, kMaxTracks> track_output_gain_target_{};
+  std::array<float, kMaxTracks> track_output_gain_smoothed_{};
+  std::array<std::atomic<bool>, kMaxTracks> track_delay_send_enabled_{};
+  std::array<std::atomic<bool>, kMaxTracks> track_reverb_send_enabled_{};
+  // Master limiter ceiling in linear gain. Default is -1.0 dBFS.
+  std::atomic<float> limiter_ceiling_linear_{0.89125094f};
+  // Master filter/EQ targets (UI thread writes, audio thread reads).
+  std::atomic<float> high_pass_hz_{20.0f};
+  std::atomic<float> low_pass_hz_{20000.0f};
+  std::atomic<float> eq_low_db_{0.0f};
+  std::atomic<float> eq_mid_db_{0.0f};
+  std::atomic<float> eq_high_db_{0.0f};
+  std::atomic<float> compressor_amount_{0.0f};
+  std::atomic<float> distortion_amount_{0.0f};
+  std::atomic<float> saturation_amount_{0.0f};
+  std::atomic<float> delay_send_{0.0f};
+  std::atomic<int32_t> delay_division_{8};
+  std::atomic<int32_t> delay_feel_{0};
+  std::atomic<float> reverb_send_{0.0f};
+  std::atomic<float> reverb_room_size_{0.55f};
+  std::atomic<float> dj_filter_amount_{0.0f};
+  std::atomic<float> dj_filter_resonance_{0.0f};
+  std::atomic<float> beat_repeat_mix_{0.0f};
+  std::atomic<int32_t> beat_repeat_division_{8};
+  std::atomic<float> trans_gate_amount_{0.0f};
+  std::atomic<int32_t> trans_gate_division_{8};
+  std::atomic<float> noise_riser_amount_{0.0f};
+  std::atomic<float> tape_stop_amount_{0.0f};
+  // Audio-thread biquad state for master HP/LP and 3-band EQ.
+  std::array<float, 5> biquad_b0_{1, 1, 1, 1, 1};
+  std::array<float, 5> biquad_b1_{0, 0, 0, 0, 0};
+  std::array<float, 5> biquad_b2_{0, 0, 0, 0, 0};
+  std::array<float, 5> biquad_a1_{0, 0, 0, 0, 0};
+  std::array<float, 5> biquad_a2_{0, 0, 0, 0, 0};
+  std::array<float, 5> biquad_z1_{0, 0, 0, 0, 0};
+  std::array<float, 5> biquad_z2_{0, 0, 0, 0, 0};
+  float dj_filter_b0_ = 1.0f;
+  float dj_filter_b1_ = 0.0f;
+  float dj_filter_b2_ = 0.0f;
+  float dj_filter_a1_ = 0.0f;
+  float dj_filter_a2_ = 0.0f;
+  float dj_filter_z1_ = 0.0f;
+  float dj_filter_z2_ = 0.0f;
+  float compressor_env_ = 0.0f;
+  float compressor_gain_ = 1.0f;
+  std::vector<float> delay_buffer_;
+  int32_t delay_write_pos_ = 0;
+  std::vector<float> delay_send_scratch_;
+  std::vector<float> reverb_send_scratch_;
+  std::array<std::vector<float>, 3> reverb_buffers_;
+  std::array<int32_t, 3> reverb_write_pos_{0, 0, 0};
+  float reverb_lowpass_state_ = 0.0f;
+  std::vector<float> perf_history_buffer_;
+  int32_t perf_history_write_pos_ = 0;
+  bool beat_repeat_active_ = false;
+  int32_t beat_repeat_capture_start_ = 0;
+  int32_t beat_repeat_capture_length_ = 0;
+  int32_t beat_repeat_last_division_ = 8;
+  int32_t beat_repeat_play_pos_ = 0;
+  uint32_t noise_state_ = 0x12345678u;
+  float noise_lowpass_state_ = 0.0f;
+  std::vector<float> tape_stop_buffer_;
+  int32_t tape_stop_write_pos_ = 0;
+  bool tape_stop_active_ = false;
+  float tape_stop_read_pos_ = 0.0f;
+  float tape_stop_lowpass_state_ = 0.0f;
 
   // ---- Recording / mic routing --------------------------------------------
   // Pre-allocated tracks. Buffers are sized on first Start() when we know the

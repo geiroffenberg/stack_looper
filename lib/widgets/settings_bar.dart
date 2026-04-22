@@ -85,104 +85,131 @@ class _SettingsBarState extends State<SettingsBar> {
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              _SettingsItem(
-                label: 'BPM',
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: constraints.maxWidth),
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    IconButton(
-                      onPressed: _decreaseBpm,
-                      icon: const Icon(Icons.remove, size: 18),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minHeight: 32,
-                        minWidth: 32,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    SizedBox(
-                      width: 64,
-                      child: TextField(
-                        controller: _bpmController,
-                        keyboardType: TextInputType.number,
-                        textAlign: TextAlign.center,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                          LengthLimitingTextInputFormatter(3),
-                        ],
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 10,
+                    _SettingsItem(
+                      label: 'BPM',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _BpmStepperButton(
+                            icon: Icons.remove,
+                            onPressed: _decreaseBpm,
                           ),
-                        ),
-                        onSubmitted: _submitBpm,
-                        onTapOutside: (_) => _submitBpm(_bpmController.text),
+                          Container(
+                            width: 1,
+                            height: 24,
+                            color: Theme.of(context).dividerColor.withOpacity(0.75),
+                          ),
+                          SizedBox(
+                            width: 64,
+                            child: TextField(
+                              controller: _bpmController,
+                              keyboardType: TextInputType.number,
+                              textAlign: TextAlign.center,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                                LengthLimitingTextInputFormatter(3),
+                              ],
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                filled: false,
+                                fillColor: Colors.transparent,
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 10,
+                                ),
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                border: InputBorder.none,
+                              ),
+                              onSubmitted: _submitBpm,
+                              onTapOutside: (_) => _submitBpm(_bpmController.text),
+                            ),
+                          ),
+                          Container(
+                            width: 1,
+                            height: 24,
+                            color: Theme.of(context).dividerColor.withOpacity(0.75),
+                          ),
+                          _BpmStepperButton(
+                            icon: Icons.add,
+                            onPressed: _increaseBpm,
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      onPressed: _increaseBpm,
-                      icon: const Icon(Icons.add, size: 18),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minHeight: 32,
-                        minWidth: 32,
+                    const SizedBox(width: 12),
+                    _SettingsItem(
+                      label: 'Repeat',
+                      framed: true,
+                      child: _CompactDropdown(
+                        value: widget.repeatCount,
+                        options: widget.repeatOptions,
+                        onChanged: widget.onRepeatChanged,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    _SettingsItem(
+                      label: 'Tracks',
+                      framed: true,
+                      child: _CompactDropdown(
+                        value: widget.numTracksToRecord,
+                        options: widget.numTrackOptions,
+                        onChanged: widget.onNumTracksChanged,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
-              _SettingsItem(
-                label: 'Repeat',
-                child: _CompactDropdown(
-                  value: widget.repeatCount,
-                  options: widget.repeatOptions,
-                  onChanged: widget.onRepeatChanged,
-                ),
-              ),
-              const SizedBox(width: 12),
-              _SettingsItem(
-                label: 'Tracks',
-                child: _CompactDropdown(
-                  value: widget.numTracksToRecord,
-                  options: widget.numTrackOptions,
-                  onChanged: widget.onNumTracksChanged,
-                ),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _SettingsItem({required String label, required Widget child}) {
+  Widget _SettingsItem({
+    required String label,
+    required Widget child,
+    bool framed = true,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           label,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: Theme.of(context).textTheme.labelMedium?.color,
+          ),
         ),
         const SizedBox(height: 4),
-        Container(
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.white24, width: 1),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-          child: child,
-        ),
+        if (framed)
+          Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface.withOpacity(0.45),
+              border: Border.all(
+                color: Theme.of(context).dividerColor.withOpacity(0.82),
+                width: 1,
+              ),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: child,
+          )
+        else
+          child,
       ],
     );
   }
@@ -210,8 +237,14 @@ class _CompactDropdown extends StatelessWidget {
       child: DropdownButtonFormField<int>(
         isDense: true,
         initialValue: options.contains(value) ? value : options.first,
-        decoration: const InputDecoration(
-          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        decoration: InputDecoration(
+          isDense: true,
+          filled: false,
+          fillColor: Colors.transparent,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          border: InputBorder.none,
         ),
         items: options
             .map(
@@ -226,6 +259,30 @@ class _CompactDropdown extends StatelessWidget {
             onChanged(updated);
           }
         },
+      ),
+    );
+  }
+}
+
+class _BpmStepperButton extends StatelessWidget {
+  const _BpmStepperButton({
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(
+        minHeight: 32,
+        minWidth: 32,
       ),
     );
   }

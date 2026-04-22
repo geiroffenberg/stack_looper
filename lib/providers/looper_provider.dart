@@ -49,6 +49,35 @@ class LooperProvider extends ChangeNotifier {
   int? _armedTrackId;
   bool _suppressMetronomeClicks = false;
   int? _playbackAnchorFrame;
+  bool _headphoneSafetyEnabled = false;
+
+  // Master FX page state.
+  bool _fxEnabled = true;
+  double _fxHighPassHz = 20.0;
+  double _fxLowPassHz = 20000.0;
+  double _fxEqLowDb = 0.0;
+  double _fxEqMidDb = 0.0;
+  double _fxEqHighDb = 0.0;
+  double _fxCompressorAmount = 0.0;
+  double _fxDistortionAmount = 0.0;
+  double _fxSaturationAmount = 0.0;
+  double _fxDelaySend = 0.0;
+  int _fxDelayDivision = 8;
+  int _fxDelayFeel = 0;
+  double _fxReverbSend = 0.0;
+  double _fxReverbRoomSize = 0.55;
+  double _fxDjFilterAmount = 0.0;
+  double _fxDjFilterResonance = 0.0;
+  double _fxBeatRepeatMix = 0.0;
+  int _fxBeatRepeatDivision = 8;
+  double _fxTransGateAmount = 0.0;
+  int _fxTransGateDivision = 8;
+  double _fxNoiseRiserAmount = 0.0;
+  double _fxTapeStopAmount = 0.0;
+  double _fxLimiterCeilingDb = -1.0;
+  double _fxMasterOutputDb = 0.0;
+  late final List<double> _fxTrackOutputDb =
+      List<double>.filled(AppConstants.maxTracks, 0.0, growable: false);
 
   // Native beat plumbing. _beatSub listens for the whole lifetime of the
   // transport (count-in → recording). _countInBaseBeat anchors local beat 1
@@ -74,6 +103,32 @@ class LooperProvider extends ChangeNotifier {
   bool get recordArmed => _recordArmed;
   bool get armedBlinkOn => _armedBlinkOn;
   int? get armedTrackId => _armedTrackId;
+  bool get headphoneSafetyEnabled => _headphoneSafetyEnabled;
+  bool get fxEnabled => _fxEnabled;
+  double get fxHighPassHz => _fxHighPassHz;
+  double get fxLowPassHz => _fxLowPassHz;
+  double get fxEqLowDb => _fxEqLowDb;
+  double get fxEqMidDb => _fxEqMidDb;
+  double get fxEqHighDb => _fxEqHighDb;
+  double get fxCompressorAmount => _fxCompressorAmount;
+  double get fxDistortionAmount => _fxDistortionAmount;
+  double get fxSaturationAmount => _fxSaturationAmount;
+  double get fxDelaySend => _fxDelaySend;
+  int get fxDelayDivision => _fxDelayDivision;
+  int get fxDelayFeel => _fxDelayFeel;
+  double get fxReverbSend => _fxReverbSend;
+  double get fxReverbRoomSize => _fxReverbRoomSize;
+  double get fxDjFilterAmount => _fxDjFilterAmount;
+  double get fxDjFilterResonance => _fxDjFilterResonance;
+  double get fxBeatRepeatMix => _fxBeatRepeatMix;
+  int get fxBeatRepeatDivision => _fxBeatRepeatDivision;
+  double get fxTransGateAmount => _fxTransGateAmount;
+  int get fxTransGateDivision => _fxTransGateDivision;
+  double get fxNoiseRiserAmount => _fxNoiseRiserAmount;
+  double get fxTapeStopAmount => _fxTapeStopAmount;
+  double get fxLimiterCeilingDb => _fxLimiterCeilingDb;
+  double get fxMasterOutputDb => _fxMasterOutputDb;
+  List<double> get fxTrackOutputDb => List<double>.unmodifiable(_fxTrackOutputDb);
 
   int get visualBarDividers =>
       _state.tracks.any((track) => track.barLength == 8) ? 8 : 4;
@@ -135,6 +190,427 @@ class LooperProvider extends ChangeNotifier {
       return;
     }
     _updateTrack(trackId, (t) => t.copyWith(isMuted: !t.isMuted));
+  }
+
+  void toggleTrackDelaySend(int trackId) {
+    if (trackId < 0 || trackId >= _state.tracks.length) return;
+    final Track track = _state.tracks[trackId];
+    final bool enabled = !track.delaySendEnabled;
+    _updateTrack(trackId, (t) => t.copyWith(delaySendEnabled: enabled));
+    final native = _native;
+    if (native != null) {
+      unawaited(native.setTrackDelaySendEnabled(trackId: trackId, enabled: enabled));
+    }
+  }
+
+  void toggleTrackReverbSend(int trackId) {
+    if (trackId < 0 || trackId >= _state.tracks.length) return;
+    final Track track = _state.tracks[trackId];
+    final bool enabled = !track.reverbSendEnabled;
+    _updateTrack(trackId, (t) => t.copyWith(reverbSendEnabled: enabled));
+    final native = _native;
+    if (native != null) {
+      unawaited(native.setTrackReverbSendEnabled(trackId: trackId, enabled: enabled));
+    }
+  }
+
+  Future<void> toggleHeadphoneSafetyMode() async {
+    _headphoneSafetyEnabled = !_headphoneSafetyEnabled;
+    notifyListeners();
+
+    if (_headphoneSafetyEnabled) {
+      if (_isCaptureInProgress) {
+        await _audioService.stopAll();
+      }
+      return;
+    }
+
+    if (_state.transportState == TransportState.playing ||
+        _state.transportState == TransportState.recording ||
+        _recordArmed) {
+      await _playAudibleTracks(_state.tracks);
+    }
+  }
+
+  Future<void> setFxEnabled(bool enabled) async {
+    _fxEnabled = enabled;
+    notifyListeners();
+    await _applyMasterOutputGain();
+  }
+
+  Future<void> setFxHighPassHz(double value) async {
+    _fxHighPassHz = value.clamp(20.0, 1000.0);
+    notifyListeners();
+    await _applyHighPass();
+  }
+
+  Future<void> setFxLowPassHz(double value) async {
+    _fxLowPassHz = value.clamp(500.0, 20000.0);
+    notifyListeners();
+    await _applyLowPass();
+  }
+
+  Future<void> setFxEqLowDb(double value) async {
+    _fxEqLowDb = value.clamp(-24.0, 12.0);
+    notifyListeners();
+    await _applyEqLow();
+  }
+
+  Future<void> setFxEqMidDb(double value) async {
+    _fxEqMidDb = value.clamp(-24.0, 12.0);
+    notifyListeners();
+    await _applyEqMid();
+  }
+
+  Future<void> setFxEqHighDb(double value) async {
+    _fxEqHighDb = value.clamp(-24.0, 12.0);
+    notifyListeners();
+    await _applyEqHigh();
+  }
+
+  void setFxCompressorAmount(double value) {
+    _fxCompressorAmount = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyCompressorAmount());
+  }
+
+  void setFxDistortionAmount(double value) {
+    _fxDistortionAmount = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyDistortionAmount());
+  }
+
+  void setFxSaturationAmount(double value) {
+    _fxSaturationAmount = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applySaturationAmount());
+  }
+
+  void setFxDelaySend(double value) {
+    _fxDelaySend = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyDelaySend());
+  }
+
+  void setFxDelayDivision(int value) {
+    const List<int> allowed = <int>[2, 4, 8, 16];
+    _fxDelayDivision = allowed.contains(value) ? value : 8;
+    notifyListeners();
+    unawaited(_applyDelayDivision());
+  }
+
+  void setFxDelayFeel(int value) {
+    const List<int> allowed = <int>[0, 1, 2];
+    _fxDelayFeel = allowed.contains(value) ? value : 0;
+    notifyListeners();
+    unawaited(_applyDelayFeel());
+  }
+
+  void setFxReverbSend(double value) {
+    _fxReverbSend = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyReverbSend());
+  }
+
+  void setFxReverbRoomSize(double value) {
+    _fxReverbRoomSize = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyReverbRoomSize());
+  }
+
+  void setFxDjFilterAmount(double value) {
+    _fxDjFilterAmount = value.clamp(-1.0, 1.0);
+    notifyListeners();
+    unawaited(_applyDjFilterAmount());
+  }
+
+  void setFxDjFilterResonance(double value) {
+    _fxDjFilterResonance = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyDjFilterResonance());
+  }
+
+  void setFxBeatRepeatMix(double value) {
+    _fxBeatRepeatMix = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyBeatRepeatMix());
+  }
+
+  void setFxBeatRepeatDivision(int value) {
+    const List<int> allowed = <int>[2, 4, 8, 16];
+    _fxBeatRepeatDivision = allowed.contains(value) ? value : 8;
+    notifyListeners();
+    unawaited(_applyBeatRepeatDivision());
+  }
+
+  void setFxTransGateAmount(double value) {
+    _fxTransGateAmount = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyTransGateAmount());
+  }
+
+  void setFxTransGateDivision(int value) {
+    const List<int> allowed = <int>[2, 4, 8, 16];
+    _fxTransGateDivision = allowed.contains(value) ? value : 8;
+    notifyListeners();
+    unawaited(_applyTransGateDivision());
+  }
+
+  void setFxNoiseRiserAmount(double value) {
+    _fxNoiseRiserAmount = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyNoiseRiserAmount());
+  }
+
+  void setFxTapeStopAmount(double value) {
+    _fxTapeStopAmount = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyTapeStopAmount());
+  }
+
+  Future<void> setFxLimiterCeilingDb(double value) async {
+    _fxLimiterCeilingDb = value.clamp(-24.0, -0.1);
+    notifyListeners();
+    await _applyLimiterCeiling();
+  }
+
+  Future<void> setFxMasterOutputDb(double value) async {
+    _fxMasterOutputDb = value.clamp(-24.0, 12.0);
+    notifyListeners();
+    await _applyMasterOutputGain();
+  }
+
+  Future<void> setTrackOutputGainDb(int trackId, double value) async {
+    if (trackId < 0 || trackId >= _fxTrackOutputDb.length) {
+      return;
+    }
+    final double clamped = value.clamp(-60.0, 12.0);
+    _fxTrackOutputDb[trackId] = clamped;
+    notifyListeners();
+    final native = _native;
+    if (native == null) return;
+    await native.setTrackOutputGainDb(trackId: trackId, db: clamped);
+  }
+
+  void resetPerformanceFx() {
+    _fxDistortionAmount = 0.0;
+    _fxDjFilterAmount = 0.0;
+    _fxDjFilterResonance = 0.0;
+    _fxBeatRepeatMix = 0.0;
+    _fxBeatRepeatDivision = 8;
+    _fxTransGateAmount = 0.0;
+    _fxTransGateDivision = 8;
+    _fxNoiseRiserAmount = 0.0;
+    _fxTapeStopAmount = 0.0;
+    notifyListeners();
+    unawaited(_applyDistortionAmount());
+    unawaited(_applyDjFilterAmount());
+    unawaited(_applyDjFilterResonance());
+    unawaited(_applyBeatRepeatMix());
+    unawaited(_applyBeatRepeatDivision());
+    unawaited(_applyTransGateAmount());
+    unawaited(_applyTransGateDivision());
+    unawaited(_applyNoiseRiserAmount());
+    unawaited(_applyTapeStopAmount());
+  }
+
+  Future<void> resetAllFx() async {
+    _fxEnabled = true;
+    _fxHighPassHz = 20.0;
+    _fxLowPassHz = 20000.0;
+    _fxEqLowDb = 0.0;
+    _fxEqMidDb = 0.0;
+    _fxEqHighDb = 0.0;
+    _fxCompressorAmount = 0.0;
+    _fxDistortionAmount = 0.0;
+    _fxSaturationAmount = 0.0;
+    _fxDelaySend = 0.0;
+    _fxDelayDivision = 8;
+    _fxDelayFeel = 0;
+    _fxReverbSend = 0.0;
+    _fxReverbRoomSize = 0.55;
+    _fxDjFilterAmount = 0.0;
+    _fxDjFilterResonance = 0.0;
+    _fxBeatRepeatMix = 0.0;
+    _fxBeatRepeatDivision = 8;
+    _fxTransGateAmount = 0.0;
+    _fxTransGateDivision = 8;
+    _fxNoiseRiserAmount = 0.0;
+    _fxTapeStopAmount = 0.0;
+    _fxLimiterCeilingDb = -1.0;
+    _fxMasterOutputDb = 0.0;
+    for (int i = 0; i < _fxTrackOutputDb.length; i++) {
+      _fxTrackOutputDb[i] = 0.0;
+    }
+    notifyListeners();
+    await _applyMasterOutputGain();
+    await _applyLimiterCeiling();
+    await _applyHighPass();
+    await _applyLowPass();
+    await _applyEqLow();
+    await _applyEqMid();
+    await _applyEqHigh();
+    await _applyCompressorAmount();
+    await _applyDistortionAmount();
+    await _applySaturationAmount();
+    await _applyDelaySend();
+    await _applyDelayDivision();
+    await _applyDelayFeel();
+    await _applyReverbSend();
+    await _applyReverbRoomSize();
+    await _applyDjFilterAmount();
+    await _applyDjFilterResonance();
+    await _applyBeatRepeatMix();
+    await _applyBeatRepeatDivision();
+    await _applyTransGateAmount();
+    await _applyTransGateDivision();
+    await _applyNoiseRiserAmount();
+    await _applyTapeStopAmount();
+    final native = _native;
+    if (native != null) {
+      for (int i = 0; i < _fxTrackOutputDb.length; i++) {
+        await native.setTrackOutputGainDb(trackId: i, db: 0.0);
+      }
+    }
+  }
+
+  Future<void> _applyMasterOutputGain() async {
+    final native = _native;
+    if (native == null) return;
+    final double db = _fxEnabled ? _fxMasterOutputDb : 0.0;
+    await native.setMasterOutputGainDb(db);
+  }
+
+  Future<void> _applyLimiterCeiling() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setLimiterCeilingDb(_fxLimiterCeilingDb);
+  }
+
+  Future<void> _applyHighPass() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setHighPassHz(_fxHighPassHz);
+  }
+
+  Future<void> _applyLowPass() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setLowPassHz(_fxLowPassHz);
+  }
+
+  Future<void> _applyEqLow() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setEqLowDb(_fxEqLowDb);
+  }
+
+  Future<void> _applyEqMid() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setEqMidDb(_fxEqMidDb);
+  }
+
+  Future<void> _applyEqHigh() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setEqHighDb(_fxEqHighDb);
+  }
+
+  Future<void> _applyCompressorAmount() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setCompressorAmount(_fxCompressorAmount);
+  }
+
+  Future<void> _applyDistortionAmount() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setDistortionAmount(_fxDistortionAmount);
+  }
+
+  Future<void> _applySaturationAmount() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setSaturationAmount(_fxSaturationAmount);
+  }
+
+  Future<void> _applyDelaySend() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setDelaySend(_fxDelaySend);
+  }
+
+  Future<void> _applyDelayDivision() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setDelayDivision(_fxDelayDivision);
+  }
+
+  Future<void> _applyDelayFeel() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setDelayFeel(_fxDelayFeel);
+  }
+
+  Future<void> _applyReverbSend() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setReverbSend(_fxReverbSend);
+  }
+
+  Future<void> _applyReverbRoomSize() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setReverbRoomSize(_fxReverbRoomSize);
+  }
+
+  Future<void> _applyDjFilterAmount() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setDjFilterAmount(_fxDjFilterAmount);
+  }
+
+  Future<void> _applyDjFilterResonance() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setDjFilterResonance(_fxDjFilterResonance);
+  }
+
+  Future<void> _applyBeatRepeatMix() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setBeatRepeatMix(_fxBeatRepeatMix);
+  }
+
+  Future<void> _applyBeatRepeatDivision() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setBeatRepeatDivision(_fxBeatRepeatDivision);
+  }
+
+  Future<void> _applyTransGateAmount() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setTransGateAmount(_fxTransGateAmount);
+  }
+
+  Future<void> _applyTransGateDivision() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setTransGateDivision(_fxTransGateDivision);
+  }
+
+  Future<void> _applyNoiseRiserAmount() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setNoiseRiserAmount(_fxNoiseRiserAmount);
+  }
+
+  Future<void> _applyTapeStopAmount() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setTapeStopAmount(_fxTapeStopAmount);
   }
 
   Future<void> playAll() async {
@@ -336,6 +812,10 @@ class LooperProvider extends ChangeNotifier {
         transportState: TransportState.recording,
       );
       notifyListeners();
+
+      if (_headphoneSafetyEnabled) {
+        unawaited(_audioService.stopAll());
+      }
     });
 
     _recordingTimer?.cancel();
@@ -514,6 +994,10 @@ class LooperProvider extends ChangeNotifier {
       selectedTrackIndex: newId,
     );
     notifyListeners();
+
+    if (_headphoneSafetyEnabled && _isCaptureInProgress) {
+      unawaited(_audioService.stopAll());
+    }
   }
 
   void _flipToRecordingState() {
@@ -537,6 +1021,10 @@ class LooperProvider extends ChangeNotifier {
     );
     notifyListeners();
     _flashBeat();
+
+    if (_headphoneSafetyEnabled) {
+      unawaited(_audioService.stopAll());
+    }
 
     unawaited(_playAudibleTracks(_state.tracks, resetAnchor: true));
   }
@@ -671,6 +1159,51 @@ class LooperProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> clearAllTracks() async {
+    _recordingTimer?.cancel();
+    _recordingTimer = null;
+    _armStartTimer?.cancel();
+    _armStartTimer = null;
+    _stopArmedBlink();
+    _recordArmed = false;
+    _armedTrackId = null;
+    _suppressMetronomeClicks = false;
+    _playbackAnchorFrame = null;
+    await _stopBeatListener();
+    _beatFlash = false;
+    _localBeat = 0;
+    _countInBaseBeat = null;
+    _pendingTargets = const [];
+    _resetChainState();
+    _activeRecordingTrackIds.clear();
+
+    await _audioService.stopAll();
+    for (final track in _state.tracks) {
+      if (track.hasAudio) {
+        await _audioService.deleteTrack(track.id);
+      }
+    }
+
+    final List<Track> clearedTracks = _state.tracks
+        .map(
+          (track) => track.copyWith(
+            hasAudio: false,
+            isMuted: false,
+            state: TrackState.empty,
+            waveformPeaks: const <double>[],
+          ),
+        )
+        .toList(growable: false);
+
+    _state = _state.copyWith(
+      tracks: clearedTracks,
+      transportState: TransportState.stopped,
+      selectedTrackIndex: 0,
+      numTracksToRecord: 1,
+    );
+    notifyListeners();
+  }
+
   List<int> _targetTrackIndexes({
     required int startIndex,
     required int desiredCount,
@@ -781,9 +1314,25 @@ class LooperProvider extends ChangeNotifier {
         _playbackAnchorFrame = await native.engine.currentFrame();
       }
     }
-    for (final track in tracks.where((t) => t.hasAudio && !t.isMuted)) {
+    for (final track in tracks.where(_isTrackAudibleInCurrentMode)) {
       await _audioService.playTrack(track.id, loop: true);
     }
+  }
+
+    bool get _isCaptureInProgress =>
+      _state.transportState == TransportState.recording;
+
+  bool _isTrackAudibleInCurrentMode(Track track) {
+    if (!track.hasAudio || track.isMuted) {
+      return false;
+    }
+    if (!_headphoneSafetyEnabled || !_isCaptureInProgress) {
+      return true;
+    }
+    // Headphone safety mode: while capturing, only allow tracks explicitly
+    // marked as active recording targets (typically none, because new tracks
+    // are empty and should stay silent to prevent speaker bleed).
+    return _activeRecordingTrackIds.contains(track.id);
   }
 
   Future<void> _refreshTrackWaveform(int trackId) async {

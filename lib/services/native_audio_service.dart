@@ -1,5 +1,6 @@
 import 'audio_service.dart';
 import 'native_audio_engine.dart';
+import '../constants/app_constants.dart';
 
 /// [AudioService] implementation backed entirely by the native Oboe engine.
 ///
@@ -61,6 +62,62 @@ class NativeAudioService extends AudioService {
   Future<void> setMetronomeAudible(bool audible) =>
       _engine.setMetronomeAudible(audible);
 
+    Future<void> setMasterOutputGainDb(double db) =>
+      _engine.setMasterOutputGainDb(db);
+
+    Future<void> setLimiterCeilingDb(double db) =>
+        _engine.setLimiterCeilingDb(db);
+
+    Future<void> setHighPassHz(double hz) => _engine.setHighPassHz(hz);
+    Future<void> setLowPassHz(double hz) => _engine.setLowPassHz(hz);
+    Future<void> setEqLowDb(double db) => _engine.setEqLowDb(db);
+    Future<void> setEqMidDb(double db) => _engine.setEqMidDb(db);
+    Future<void> setEqHighDb(double db) => _engine.setEqHighDb(db);
+    Future<void> setCompressorAmount(double amount) =>
+      _engine.setCompressorAmount(amount);
+    Future<void> setDistortionAmount(double amount) =>
+      _engine.setDistortionAmount(amount);
+    Future<void> setSaturationAmount(double amount) =>
+      _engine.setSaturationAmount(amount);
+    Future<void> setDelaySend(double amount) => _engine.setDelaySend(amount);
+    Future<void> setDelayDivision(int division) =>
+      _engine.setDelayDivision(division);
+    Future<void> setDelayFeel(int feel) => _engine.setDelayFeel(feel);
+    Future<void> setReverbSend(double amount) => _engine.setReverbSend(amount);
+    Future<void> setReverbRoomSize(double amount) =>
+      _engine.setReverbRoomSize(amount);
+    Future<void> setDjFilterAmount(double amount) =>
+      _engine.setDjFilterAmount(amount);
+    Future<void> setDjFilterResonance(double amount) =>
+      _engine.setDjFilterResonance(amount);
+    Future<void> setBeatRepeatMix(double amount) =>
+      _engine.setBeatRepeatMix(amount);
+    Future<void> setBeatRepeatDivision(int division) =>
+      _engine.setBeatRepeatDivision(division);
+    Future<void> setTransGateAmount(double amount) =>
+      _engine.setTransGateAmount(amount);
+    Future<void> setTransGateDivision(int division) =>
+      _engine.setTransGateDivision(division);
+    Future<void> setNoiseRiserAmount(double amount) =>
+      _engine.setNoiseRiserAmount(amount);
+    Future<void> setTapeStopAmount(double amount) =>
+      _engine.setTapeStopAmount(amount);
+
+    Future<void> setTrackOutputGainDb({
+      required int trackId,
+      required double db,
+    }) => _engine.setTrackOutputGainDb(trackId: trackId, db: db);
+
+    Future<void> setTrackDelaySendEnabled({
+      required int trackId,
+      required bool enabled,
+    }) => _engine.setTrackDelaySendEnabled(trackId: trackId, enabled: enabled);
+
+    Future<void> setTrackReverbSendEnabled({
+      required int trackId,
+      required bool enabled,
+    }) => _engine.setTrackReverbSendEnabled(trackId: trackId, enabled: enabled);
+
   Future<List<double>> trackWaveformPeaks({
     required int trackId,
     required int bucketCount,
@@ -103,7 +160,7 @@ class NativeAudioService extends AudioService {
 
   @override
   Future<void> stopAll() async {
-    for (var i = 0; i < 4; i++) {
+    for (var i = 0; i < AppConstants.maxTracks; i++) {
       await _engine.stopTrackPlayback(i);
     }
   }

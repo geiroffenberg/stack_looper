@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../constants/app_constants.dart';
 import '../models/looper_state.dart';
 import '../providers/looper_provider.dart';
+import '../screens/fx_screen.dart';
 import '../widgets/top_menu_bar.dart';
 import '../widgets/settings_bar.dart';
 import '../widgets/track_card.dart';
@@ -59,17 +60,15 @@ class _LooperScreenState extends State<LooperScreen>
               padding: const EdgeInsets.all(12),
               child: Column(
                 children: [
-                  TopMenuBar(
-                    transportState: state.transportState,
-                    onPlay: provider.playAll,
-                    onRecord: provider.startRecordingSession,
-                    canRecord: provider.canStartRecording,
-                    beatFlash: provider.beatFlash,
-                    recordArmed: provider.recordArmed,
-                    armedBlinkOn: provider.armedBlinkOn,
-                    onSettingsPressed: () {
-                      // TODO: Implement settings menu
-                    },
+                  SettingsBar(
+                    bpm: state.bpm,
+                    repeatCount: state.repeatCount,
+                    numTracksToRecord: state.numTracksToRecord,
+                    repeatOptions: AppConstants.repeatValues,
+                    numTrackOptions: provider.availableNumTracksToRecordOptions,
+                    onBpmChanged: provider.setBpm,
+                    onRepeatChanged: provider.setRepeatCount,
+                    onNumTracksChanged: provider.setNumTracksToRecord,
                   ),
                   const SizedBox(height: 8),
                   Expanded(
@@ -106,6 +105,10 @@ class _LooperScreenState extends State<LooperScreen>
                                 isArmed: isArmedTrack,
                                 armedBlinkOn: provider.armedBlinkOn,
                                 onDelete: () => provider.deleteTrackAudio(index),
+                                onToggleDelaySend: () =>
+                                  provider.toggleTrackDelaySend(index),
+                                onToggleReverbSend: () =>
+                                  provider.toggleTrackReverbSend(index),
                                 onToggleMute: () => provider.toggleMute(index),
                                 onBarLengthChanged: (barLength) =>
                                     provider.setTrackBarLength(index, barLength),
@@ -117,15 +120,27 @@ class _LooperScreenState extends State<LooperScreen>
                     ),
                   ),
                   const SizedBox(height: 8),
-                  SettingsBar(
-                    bpm: state.bpm,
-                    repeatCount: state.repeatCount,
-                    numTracksToRecord: state.numTracksToRecord,
-                    repeatOptions: AppConstants.repeatValues,
-                    numTrackOptions: provider.availableNumTracksToRecordOptions,
-                    onBpmChanged: provider.setBpm,
-                    onRepeatChanged: provider.setRepeatCount,
-                    onNumTracksChanged: provider.setNumTracksToRecord,
+                  TopMenuBar(
+                    transportState: state.transportState,
+                    onPlay: provider.playAll,
+                    onRecord: provider.startRecordingSession,
+                    onToggleHeadphoneBleed: provider.toggleHeadphoneSafetyMode,
+                    headphoneSafetyEnabled: provider.headphoneSafetyEnabled,
+                    onClearAll: provider.clearAllTracks,
+                    onFxPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const FxScreen(),
+                        ),
+                      );
+                    },
+                    canRecord: provider.canStartRecording,
+                    beatFlash: provider.beatFlash,
+                    recordArmed: provider.recordArmed,
+                    armedBlinkOn: provider.armedBlinkOn,
+                    onSettingsPressed: () {
+                      // TODO: Implement settings menu
+                    },
                   ),
                 ],
               ),
