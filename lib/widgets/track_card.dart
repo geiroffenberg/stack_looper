@@ -12,7 +12,8 @@ class TrackCard extends StatelessWidget {
     required this.isSelected,
     required this.visualBarDividers,
     required this.playheadProgress,
-    required this.onSelect,
+    required this.isArmed,
+    required this.armedBlinkOn,
     required this.onDelete,
     required this.onToggleMute,
     required this.onBarLengthChanged,
@@ -22,7 +23,8 @@ class TrackCard extends StatelessWidget {
   final bool isSelected;
   final int visualBarDividers;
   final double playheadProgress;
-  final VoidCallback onSelect;
+  final bool isArmed;
+  final bool armedBlinkOn;
   final VoidCallback onDelete;
   final VoidCallback onToggleMute;
   final ValueChanged<int> onBarLengthChanged;
@@ -34,7 +36,6 @@ class TrackCard extends StatelessWidget {
         : Theme.of(context).dividerColor.withOpacity(0.3);
 
     return GestureDetector(
-      onTap: onSelect,
       onLongPress: onDelete,
       child: Container(
         height: 92,
@@ -49,7 +50,7 @@ class TrackCard extends StatelessWidget {
             Row(
               children: [
                 SizedBox(
-                  width: 64,
+                  width: 72,
                   child: DropdownButtonFormField<int>(
                     isDense: true,
                     initialValue: track.barLength,
@@ -90,6 +91,8 @@ class TrackCard extends StatelessWidget {
                   painter: _WaveformPainter(
                     hasAudio: track.hasAudio,
                     isRecording: track.state == TrackState.recording,
+                    isArmed: isArmed,
+                    armedBlinkOn: armedBlinkOn,
                     waveformPeaks: track.waveformPeaks,
                     visualBarDividers: visualBarDividers,
                     trackBarLength: track.barLength,
@@ -113,6 +116,8 @@ class _WaveformPainter extends CustomPainter {
   const _WaveformPainter({
     required this.hasAudio,
     required this.isRecording,
+    required this.isArmed,
+    required this.armedBlinkOn,
     required this.waveformPeaks,
     required this.visualBarDividers,
     required this.trackBarLength,
@@ -124,6 +129,8 @@ class _WaveformPainter extends CustomPainter {
 
   final bool hasAudio;
   final bool isRecording;
+  final bool isArmed;
+  final bool armedBlinkOn;
   final List<double> waveformPeaks;
   final int visualBarDividers;
   final int trackBarLength;
@@ -195,13 +202,17 @@ class _WaveformPainter extends CustomPainter {
     }
 
     final Paint playheadPaint = Paint()
-      ..color = isRecording ? const Color(0xFFE53935) : playheadColor
+      ..color = (isRecording || isArmed) ? const Color(0xFFE53935) : playheadColor
       ..strokeWidth = 2;
     final double clampedProgress = playheadProgress.clamp(0.0, 1.0).toDouble();
     final double playheadX = size.width * clampedProgress;
     
     // Only draw playhead if track has audio or is currently recording
-    if (hasAudio || isRecording) {
+    if (isArmed) {
+      if (armedBlinkOn) {
+        canvas.drawLine(Offset(0, 0), Offset(0, size.height), playheadPaint);
+      }
+    } else if (hasAudio || isRecording) {
       canvas.drawLine(Offset(playheadX, 0), Offset(playheadX, size.height), playheadPaint);
     }
   }
@@ -210,6 +221,8 @@ class _WaveformPainter extends CustomPainter {
   bool shouldRepaint(covariant _WaveformPainter oldDelegate) {
     return oldDelegate.hasAudio != hasAudio ||
         oldDelegate.isRecording != isRecording ||
+      oldDelegate.isArmed != isArmed ||
+      oldDelegate.armedBlinkOn != armedBlinkOn ||
       oldDelegate.waveformPeaks != waveformPeaks ||
         oldDelegate.visualBarDividers != visualBarDividers ||
         oldDelegate.trackBarLength != trackBarLength ||

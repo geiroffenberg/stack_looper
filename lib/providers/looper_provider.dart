@@ -41,7 +41,14 @@ class LooperProvider extends ChangeNotifier {
   LooperState _state;
   final Set<int> _activeRecordingTrackIds = <int>{};
   Timer? _recordingTimer;
+  Timer? _armStartTimer;
+  Timer? _armedBlinkTimer;
   bool _beatFlash = false;
+  bool _recordArmed = false;
+  bool _armedBlinkOn = false;
+  int? _armedTrackId;
+  bool _suppressMetronomeClicks = false;
+  int? _playbackAnchorFrame;
 
   // Native beat plumbing. _beatSub listens for the whole lifetime of the
   // transport (count-in → recording). _countInBaseBeat anchors local beat 1
@@ -64,11 +71,17 @@ class LooperProvider extends ChangeNotifier {
   LooperState get state => _state;
 
   bool get beatFlash => _beatFlash;
+  bool get recordArmed => _recordArmed;
+  bool get armedBlinkOn => _armedBlinkOn;
+  int? get armedTrackId => _armedTrackId;
 
   int get visualBarDividers =>
       _state.tracks.any((track) => track.barLength == 8) ? 8 : 4;
 
   List<int> get availableNumTracksToRecordOptions {
+    if (_state.hasRecordedTracks) {
+      return const [1];
+    }
     final int empty = _state.emptyTrackCount;
     if (empty <= 0) {
       return const [1];
@@ -96,17 +109,20 @@ class LooperProvider extends ChangeNotifier {
   }
 
   void setNumTracksToRecord(int count) {
+    if (_state.hasRecordedTracks) {
+      if (_state.numTracksToRecord != 1) {
+        _state = _state.copyWith(numTracksToRecord: 1);
+        notifyListeners();
+      }
+      return;
+    }
     final int maxSelectable = _maxSelectableTrackCount();
     _state = _state.copyWith(numTracksToRecord: count.clamp(1, maxSelectable));
     notifyListeners();
   }
 
   void selectTrack(int index) {
-    if (index < 0 || index >= _state.tracks.length) {
-      return;
-    }
-    _state = _state.copyWith(selectedTrackIndex: index);
-    notifyListeners();
+    // Manual track selection is intentionally disabled.
   }
 
   void setTrackBarLength(int trackId, int barLength) {
@@ -145,10 +161,16 @@ class LooperProvider extends ChangeNotifier {
   Future<void> stopAll() async {
     _recordingTimer?.cancel();
     _recordingTimer = null;
+    _armStartTimer?.cancel();
+    _armStartTimer = null;
+    _stopArmedBlink();
+    _recordArmed = false;
+    _armedTrackId = null;
     await _stopBeatListener();
     _beatFlash = false;
     _localBeat = 0;
     _countInBaseBeat = null;
+    _playbackAnchorFrame = null;
     _resetChainState();
     await _audioService.stopAll();
 
@@ -167,6 +189,8 @@ class LooperProvider extends ChangeNotifier {
     _state = _state.copyWith(
       tracks: updated,
       transportState: TransportState.stopped,
+      selectedTrackIndex: _firstEmptyTrackIndex(),
+      numTracksToRecord: _state.hasRecordedTracks ? 1 : _state.numTracksToRecord,
     );
     notifyListeners();
   }
@@ -183,10 +207,35 @@ class LooperProvider extends ChangeNotifier {
     }
 
     if (_state.emptyTrackCount <= 0) {
+      _state = _state.copyWith(selectedTrackIndex: -1);
+      notifyListeners();
       return;
     }
 
-    final targets = _targetTrackIndexes();
+    // If already playing, arm a single-track recording for the next master
+    // loop boundary (no audible count-in).
+    if (_state.transportState == TransportState.playing) {
+      final int targetStart = _resolveTargetStart();
+      if (targetStart < 0) return;
+      await _armSingleTrackOnNextMasterBoundary(targetStart);
+      return;
+    }
+
+    final int targetStart = _resolveTargetStart();
+    if (targetStart >= 0 && targetStart != _state.selectedTrackIndex) {
+      _state = _state.copyWith(selectedTrackIndex: targetStart);
+      notifyListeners();
+    }
+
+    // Multi-track chain only applies at the very beginning (all tracks empty,
+    // starting from track 1). Any later additions are single-track recordings.
+    final bool canChain = !_state.hasRecordedTracks && targetStart == 0;
+    final int desiredTracks = canChain ? _state.numTracksToRecord : 1;
+
+    final targets = _targetTrackIndexes(
+      startIndex: targetStart,
+      desiredCount: desiredTracks,
+    );
     if (targets.isEmpty) {
       return;
     }
@@ -198,13 +247,151 @@ class LooperProvider extends ChangeNotifier {
     await _startCountIn(targets);
   }
 
+  int _resolveTargetStart() {
+    final int selected = _state.selectedTrackIndex;
+    return (selected >= 0 &&
+            selected < _state.tracks.length &&
+            !_state.tracks[selected].hasAudio)
+        ? selected
+        : _firstEmptyTrackIndex();
+  }
+
+  Future<void> _armSingleTrackOnNextMasterBoundary(int trackId) async {
+    final native = _native;
+    if (native == null) return;
+
+    _activeRecordingTrackIds
+      ..clear()
+      ..add(trackId);
+
+    // Show armed UI immediately when the user presses record while playing.
+    _recordArmed = true;
+    _armedTrackId = trackId;
+    _suppressMetronomeClicks = true;
+    _startArmedBlink();
+
+    final List<Track> armedTracks = _state.tracks
+        .map(
+          (track) => track.id == trackId
+              ? track.copyWith(state: TrackState.armed)
+              : track.hasAudio
+                  ? track.copyWith(state: TrackState.looping)
+                  : track.copyWith(state: TrackState.empty),
+        )
+        .toList(growable: false);
+    _state = _state.copyWith(
+      tracks: armedTracks,
+      selectedTrackIndex: trackId,
+      transportState: TransportState.playing,
+      numTracksToRecord: 1,
+    );
+    notifyListeners();
+
+    final int spb = await native.engine.samplesPerBeat();
+    final int sampleRate = await native.engine.sampleRate();
+    final int now = await native.engine.currentFrame();
+
+    final int targetBars = _state.tracks[trackId].barLength;
+    final int cycleBars = _longestPopulatedBarLength();
+    final int masterCycleFrames = cycleBars * _beatsPerBar * spb;
+    final int anchor = _playbackAnchorFrame ?? now;
+    int startFrame = anchor + (((now - anchor) ~/ masterCycleFrames) + 1) * masterCycleFrames;
+    if (startFrame <= now) {
+      startFrame += masterCycleFrames;
+    }
+
+    final int lengthFrames = targetBars * _beatsPerBar * spb;
+
+    await native.engine.armRecording(
+      trackId: trackId,
+      startFrame: startFrame,
+      lengthFrames: lengthFrames,
+    );
+
+    await native.setTempoBpm(_state.bpm.toDouble());
+    await native.setMetronomeAudible(false);
+    _beatSub = native.beatStream.listen(_onNativeBeat);
+    await native.startMetronome();
+    await native.setMetronomeAudible(false);
+
+    final int msUntilStart =
+        (((startFrame - now) * 1000) / sampleRate).round().clamp(0, 1 << 30);
+
+    _armStartTimer?.cancel();
+    _armStartTimer = Timer(Duration(milliseconds: msUntilStart), () {
+      if (!_recordArmed || _armedTrackId != trackId) return;
+      _recordArmed = false;
+      _armedTrackId = null;
+      _stopArmedBlink();
+
+      final List<Track> tracks = _state.tracks
+          .map(
+            (track) => track.id == trackId
+                ? track.copyWith(state: TrackState.recording)
+                : track,
+          )
+          .toList(growable: false);
+      _state = _state.copyWith(
+        tracks: tracks,
+        transportState: TransportState.recording,
+      );
+      notifyListeners();
+    });
+
+    _recordingTimer?.cancel();
+    _recordingTimer = Timer(
+      Duration(milliseconds: msUntilStart + ((lengthFrames * 1000) / sampleRate).round()),
+      () => _stopRecording(continuePlayback: true),
+    );
+
+    // Anchor for future loop-phase alignment: the native engine begins the
+    // new track's playback loop precisely at startFrame + lengthFrames.
+    _playbackAnchorFrame = startFrame + lengthFrames;
+  }
+
+  int _longestPopulatedBarLength() {
+    int longest = 1;
+    for (final t in _state.tracks) {
+      final bool isPopulated =
+          t.hasAudio ||
+          t.state == TrackState.playing ||
+          t.state == TrackState.looping;
+      if (isPopulated && t.barLength > longest) {
+        longest = t.barLength;
+      }
+    }
+    return longest;
+  }
+
+  void _startArmedBlink() {
+    _armedBlinkTimer?.cancel();
+    _armedBlinkOn = true;
+    _armedBlinkTimer = Timer.periodic(const Duration(milliseconds: 260), (_) {
+      _armedBlinkOn = !_armedBlinkOn;
+      notifyListeners();
+    });
+  }
+
+  void _stopArmedBlink() {
+    _armedBlinkTimer?.cancel();
+    _armedBlinkTimer = null;
+    _armedBlinkOn = false;
+  }
+
   Future<void> _cancelCountIn() async {
     await _stopBeatListener();
     _beatFlash = false;
     _localBeat = 0;
     _countInBaseBeat = null;
     _pendingTargets = const [];
+    _playbackAnchorFrame = null;
     _resetChainState();
+    _recordArmed = false;
+    _armedTrackId = null;
+    _suppressMetronomeClicks = false;
+    _armStartTimer?.cancel();
+    _armStartTimer = null;
+    _stopArmedBlink();
     _activeRecordingTrackIds.clear();
     _state = _state.copyWith(transportState: TransportState.stopped);
     notifyListeners();
@@ -222,19 +409,25 @@ class LooperProvider extends ChangeNotifier {
   Future<void> _startCountIn(List<int> targets) async {
     final native = _native;
     if (native == null) {
-      // Fallback: no native engine available, abort. The old timer-based
-      // path was removed with chunk 9.
-      debugPrint('[LooperProvider] no NativeAudioService; count-in skipped');
+      // Keep state semantics for tests/non-native environments: enter
+      // count-in, but do not try to drive native timing.
+      _pendingTargets = List<int>.from(targets);
+      _state = _state.copyWith(transportState: TransportState.countIn);
+      notifyListeners();
+      debugPrint('[LooperProvider] no NativeAudioService; count-in visual only');
       return;
     }
 
     _pendingTargets = List<int>.from(targets);
     _localBeat = 0;
     _countInBaseBeat = null;
+    _playbackAnchorFrame = null;
+    _suppressMetronomeClicks = false;
 
     await _audioService.stopAll();
     _state = _state.copyWith(transportState: TransportState.countIn);
     notifyListeners();
+    _flashBeat();
 
     // Make sure native tempo matches current bpm before starting the click.
     await native.setTempoBpm(_state.bpm.toDouble());
@@ -252,6 +445,10 @@ class LooperProvider extends ChangeNotifier {
   }
 
   void _onNativeBeat(int nativeBeat) {
+    if (_suppressMetronomeClicks) {
+      unawaited(_native?.setMetronomeAudible(false) ?? Future<void>.value());
+    }
+
     // Anchor on the FIRST event so local beat 1 lines up with the first
     // audible click of this count-in, regardless of the engine's monotonic
     // beat counter.
@@ -341,7 +538,7 @@ class LooperProvider extends ChangeNotifier {
     notifyListeners();
     _flashBeat();
 
-    unawaited(_playAudibleTracks(_state.tracks));
+    unawaited(_playAudibleTracks(_state.tracks, resetAnchor: true));
   }
 
   void _flashBeat() {
@@ -424,6 +621,11 @@ class LooperProvider extends ChangeNotifier {
     _chainStartBeats = starts;
     _chainCurrentIdx = 0;
 
+    // Anchor loop phase to the first target's loop origin (= its record end).
+    final int firstTargetBars = _state.tracks[targets.first].barLength;
+    _playbackAnchorFrame =
+        firstStartFrame + (firstTargetBars * beatsPerBar * spb);
+
     // UI state flip is deferred to the beat-5 event (see _onNativeBeat) so
     // the playhead animation kicks off exactly when the audio downbeat
     // fires. Recording-end is scheduled from "now" + wait-for-downbeat +
@@ -461,18 +663,27 @@ class LooperProvider extends ChangeNotifier {
       _state = _state.copyWith(numTracksToRecord: maxSelectable);
       notifyListeners();
     }
+
+    _state = _state.copyWith(
+      selectedTrackIndex: _firstEmptyTrackIndex(),
+      numTracksToRecord: _state.hasRecordedTracks ? 1 : _state.numTracksToRecord,
+    );
+    notifyListeners();
   }
 
-  List<int> _targetTrackIndexes() {
-    final int selected = _state.selectedTrackIndex;
+  List<int> _targetTrackIndexes({
+    required int startIndex,
+    required int desiredCount,
+  }) {
+    final int selected = startIndex < 0 ? 0 : startIndex;
     final List<int> ordered = [
       ...List<int>.generate(_state.tracks.length - selected, (i) => i + selected),
       ...List<int>.generate(selected, (i) => i),
     ];
 
     final emptyTracks = ordered.where((i) => !_state.tracks[i].hasAudio).toList();
-    final int desiredCount = _state.numTracksToRecord.clamp(1, emptyTracks.length);
-    return emptyTracks.take(desiredCount).toList();
+    final int count = desiredCount.clamp(1, emptyTracks.length);
+    return emptyTracks.take(count).toList();
   }
 
   Future<void> _startPlayback() async {
@@ -487,15 +698,22 @@ class LooperProvider extends ChangeNotifier {
     _state = _state.copyWith(
       tracks: updated,
       transportState: TransportState.playing,
+      selectedTrackIndex: _firstEmptyTrackIndex(),
     );
     notifyListeners();
 
-    await _playAudibleTracks(updated);
+    await _playAudibleTracks(updated, resetAnchor: true);
   }
 
   Future<void> _stopRecording({required bool continuePlayback}) async {
     _recordingTimer?.cancel();
     _recordingTimer = null;
+    _armStartTimer?.cancel();
+    _armStartTimer = null;
+    _recordArmed = false;
+    _armedTrackId = null;
+    _suppressMetronomeClicks = false;
+    _stopArmedBlink();
     await _stopBeatListener();
     _beatFlash = false;
     _localBeat = 0;
@@ -505,6 +723,8 @@ class LooperProvider extends ChangeNotifier {
     if (_activeRecordingTrackIds.isEmpty) {
       _state = _state.copyWith(
         transportState: continuePlayback ? TransportState.playing : TransportState.stopped,
+        selectedTrackIndex: _firstEmptyTrackIndex(),
+        numTracksToRecord: _state.hasRecordedTracks ? 1 : _state.numTracksToRecord,
       );
       notifyListeners();
       return;
@@ -536,15 +756,31 @@ class LooperProvider extends ChangeNotifier {
     _state = _state.copyWith(
       tracks: updatedTracks,
       transportState: continuePlayback ? TransportState.playing : TransportState.stopped,
+      selectedTrackIndex: _nextEmptyTrackIndexAfter(
+        _selectionAnchorTrackId(finalizedTrackIds),
+      ),
+      numTracksToRecord: 1,
     );
     notifyListeners();
 
     if (continuePlayback) {
-      await _playAudibleTracks(updatedTracks);
+      await _playAudibleTracks(updatedTracks, resetAnchor: true);
+    } else {
+      _playbackAnchorFrame = null;
     }
   }
 
-  Future<void> _playAudibleTracks(List<Track> tracks) async {
+  Future<void> _playAudibleTracks(List<Track> tracks, {bool resetAnchor = false}) async {
+    // Loop-phase anchor is set precisely when recording is armed, based on
+    // the engine's sample-accurate start/length. Capturing currentFrame here
+    // would introduce Dart-call latency and drift the phase, so we ignore
+    // resetAnchor unless no anchor has been set yet.
+    if (resetAnchor && _playbackAnchorFrame == null) {
+      final native = _native;
+      if (native != null) {
+        _playbackAnchorFrame = await native.engine.currentFrame();
+      }
+    }
     for (final track in tracks.where((t) => t.hasAudio && !t.isMuted)) {
       await _audioService.playTrack(track.id, loop: true);
     }
@@ -574,5 +810,39 @@ class LooperProvider extends ChangeNotifier {
 
   int _maxSelectableTrackCount() {
     return _state.emptyTrackCount.clamp(1, AppConstants.maxTracks);
+  }
+
+  int _firstEmptyTrackIndex() {
+    final int idx = _state.tracks.indexWhere((t) => !t.hasAudio);
+    return idx >= 0 ? idx : -1;
+  }
+
+  int _selectionAnchorTrackId(Set<int> finalizedTrackIds) {
+    if (_chainTargets.isNotEmpty) {
+      return _chainTargets.last;
+    }
+    if (finalizedTrackIds.isEmpty) {
+      return _state.selectedTrackIndex;
+    }
+    return finalizedTrackIds.reduce((a, b) => a > b ? a : b);
+  }
+
+  int _nextEmptyTrackIndexAfter(int anchorTrackId) {
+    if (_state.emptyTrackCount <= 0) {
+      return -1;
+    }
+
+    final int trackCount = _state.tracks.length;
+    final int normalizedAnchor =
+        anchorTrackId < 0 ? 0 : (anchorTrackId % trackCount);
+
+    for (int step = 1; step <= trackCount; step++) {
+      final int idx = (normalizedAnchor + step) % trackCount;
+      if (!_state.tracks[idx].hasAudio) {
+        return idx;
+      }
+    }
+
+    return -1;
   }
 }

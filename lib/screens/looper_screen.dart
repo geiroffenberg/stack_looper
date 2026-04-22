@@ -65,6 +65,8 @@ class _LooperScreenState extends State<LooperScreen>
                     onRecord: provider.startRecordingSession,
                     canRecord: provider.canStartRecording,
                     beatFlash: provider.beatFlash,
+                    recordArmed: provider.recordArmed,
+                    armedBlinkOn: provider.armedBlinkOn,
                     onSettingsPressed: () {
                       // TODO: Implement settings menu
                     },
@@ -85,6 +87,9 @@ class _LooperScreenState extends State<LooperScreen>
                           itemCount: state.tracks.length,
                           itemBuilder: (context, index) {
                             final track = state.tracks[index];
+                            final bool isArmedTrack =
+                                provider.armedTrackId != null &&
+                                provider.armedTrackId == track.id;
                             final double trackPlayheadProgress =
                                 _trackPlayheadProgress(
                               globalProgress: globalPlayheadProgress,
@@ -95,10 +100,11 @@ class _LooperScreenState extends State<LooperScreen>
                               padding: const EdgeInsets.only(bottom: 10),
                               child: TrackCard(
                                 track: track,
-                                isSelected: state.selectedTrackIndex == index,
+                                isSelected: !track.hasAudio && state.selectedTrackIndex == index,
                                 visualBarDividers: visualBarDividers,
-                                playheadProgress: trackPlayheadProgress,
-                                onSelect: () => provider.selectTrack(index),
+                                playheadProgress: isArmedTrack ? 0 : trackPlayheadProgress,
+                                isArmed: isArmedTrack,
+                                armedBlinkOn: provider.armedBlinkOn,
                                 onDelete: () => provider.deleteTrackAudio(index),
                                 onToggleMute: () => provider.toggleMute(index),
                                 onBarLengthChanged: (barLength) =>
@@ -152,6 +158,12 @@ class _LooperScreenState extends State<LooperScreen>
           ..value = 0;
       }
       return;
+    }
+
+    // Entering recording (or any new transport phase) should start the
+    // playhead from 0 so armed tracks don't paint mid-cycle.
+    if (changedTransport) {
+      _playheadController.value = 0;
     }
 
     if (changedTransport || changedTempo || !_playheadController.isAnimating) {

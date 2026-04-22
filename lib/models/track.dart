@@ -1,4 +1,4 @@
-enum TrackState { empty, recording, playing, looping }
+enum TrackState { empty, armed, recording, playing, looping }
 
 class Track {
   const Track({

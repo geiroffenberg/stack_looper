@@ -41,7 +41,8 @@ class _SettingsBarState extends State<SettingsBar> {
   @override
   void didUpdateWidget(covariant SettingsBar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.bpm != widget.bpm && _bpmController.text != widget.bpm.toString()) {
+    if (oldWidget.bpm != widget.bpm &&
+        _bpmController.text != widget.bpm.toString()) {
       _bpmController.text = widget.bpm.toString();
     }
   }
@@ -66,12 +67,18 @@ class _SettingsBarState extends State<SettingsBar> {
   }
 
   void _decreaseBpm() {
-    final int newBpm = (widget.bpm - 1).clamp(AppConstants.minBpm, AppConstants.maxBpm);
+    final int newBpm = (widget.bpm - 1).clamp(
+      AppConstants.minBpm,
+      AppConstants.maxBpm,
+    );
     widget.onBpmChanged(newBpm);
   }
 
   void _increaseBpm() {
-    final int newBpm = (widget.bpm + 1).clamp(AppConstants.minBpm, AppConstants.maxBpm);
+    final int newBpm = (widget.bpm + 1).clamp(
+      AppConstants.minBpm,
+      AppConstants.maxBpm,
+    );
     widget.onBpmChanged(newBpm);
   }
 
@@ -93,7 +100,10 @@ class _SettingsBarState extends State<SettingsBar> {
                       onPressed: _decreaseBpm,
                       icon: const Icon(Icons.remove, size: 18),
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minHeight: 32, minWidth: 32),
+                      constraints: const BoxConstraints(
+                        minHeight: 32,
+                        minWidth: 32,
+                      ),
                     ),
                     const SizedBox(width: 4),
                     SizedBox(
@@ -108,7 +118,10 @@ class _SettingsBarState extends State<SettingsBar> {
                         ],
                         decoration: const InputDecoration(
                           isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 10,
+                          ),
                         ),
                         onSubmitted: _submitBpm,
                         onTapOutside: (_) => _submitBpm(_bpmController.text),
@@ -119,7 +132,10 @@ class _SettingsBarState extends State<SettingsBar> {
                       onPressed: _increaseBpm,
                       icon: const Icon(Icons.add, size: 18),
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minHeight: 32, minWidth: 32),
+                      constraints: const BoxConstraints(
+                        minHeight: 32,
+                        minWidth: 32,
+                      ),
                     ),
                   ],
                 ),
@@ -149,10 +165,7 @@ class _SettingsBarState extends State<SettingsBar> {
     );
   }
 
-  Widget _SettingsItem({
-    required String label,
-    required Widget child,
-  }) {
+  Widget _SettingsItem({required String label, required Widget child}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
@@ -196,8 +209,10 @@ class _CompactDropdown extends StatelessWidget {
       width: 70,
       child: DropdownButtonFormField<int>(
         isDense: true,
-        value: options.contains(value) ? value : options.first,
-        decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10)),
+        initialValue: options.contains(value) ? value : options.first,
+        decoration: const InputDecoration(
+          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        ),
         items: options
             .map(
               (option) => DropdownMenuItem<int>(

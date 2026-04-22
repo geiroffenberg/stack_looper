@@ -10,6 +10,8 @@ class TopMenuBar extends StatelessWidget {
     required this.onRecord,
     required this.canRecord,
     required this.beatFlash,
+    required this.recordArmed,
+    required this.armedBlinkOn,
     required this.onSettingsPressed,
   });
 
@@ -18,13 +20,15 @@ class TopMenuBar extends StatelessWidget {
   final VoidCallback onRecord;
   final bool canRecord;
   final bool beatFlash;
+  final bool recordArmed;
+  final bool armedBlinkOn;
   final VoidCallback onSettingsPressed;
 
   @override
   Widget build(BuildContext context) {
     final bool isRecording = transportState == TransportState.recording;
     final bool isCountIn = transportState == TransportState.countIn;
-    final bool isRecordActive = isRecording || isCountIn;
+    final bool isRecordActive = isRecording || isCountIn || recordArmed;
     final bool isPlaying = transportState != TransportState.stopped;
     final IconData playIcon = isPlaying ? Icons.stop_rounded : Icons.play_arrow_rounded;
 
@@ -39,7 +43,7 @@ class TopMenuBar extends StatelessWidget {
               activeColor: Colors.red,
               enabled: canRecord,
               onPressed: onRecord,
-              flashActive: beatFlash,
+              flashActive: beatFlash || armedBlinkOn,
             ),
             const SizedBox(width: 8),
             _TransportButton(
