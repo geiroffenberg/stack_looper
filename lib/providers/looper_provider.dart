@@ -13,6 +13,9 @@ class LooperProvider extends ChangeNotifier {
   static const int _beatsPerBar = 4;
   static const double _defaultTrackDelaySendLevel = 1.0;
   static const double _defaultTrackReverbSendLevel = 1.0;
+  static const double _trackMinOutputDb = -60.0;
+  static const double _trackMaxOutputDb = 12.0;
+  static const double _muteThreshold = 0.001;
 
   LooperProvider({AudioService? audioService})
     : _audioService = audioService ?? AudioServiceStub(),
@@ -70,6 +73,11 @@ class LooperProvider extends ChangeNotifier {
   late final List<double> _fxTrackOutputDb = List<double>.filled(
     AppConstants.maxTracks,
     0.0,
+    growable: false,
+  );
+  late final List<double?> _preMuteTrackOutputDb = List<double?>.filled(
+    AppConstants.maxTracks,
+    null,
     growable: false,
   );
 
@@ -172,11 +180,27 @@ class LooperProvider extends ChangeNotifier {
   }
 
   void toggleMute(int trackId) {
+    if (trackId < 0 || trackId >= _state.tracks.length) {
+      return;
+    }
     final Track track = _state.tracks[trackId];
     if (!track.hasAudio) {
       return;
     }
-    _updateTrack(trackId, (t) => t.copyWith(isMuted: !t.isMuted));
+    if (track.isMuted) {
+      final double restore = (_preMuteTrackOutputDb[trackId] ?? 0.0).clamp(
+        _trackMinOutputDb,
+        _trackMaxOutputDb,
+      );
+      _preMuteTrackOutputDb[trackId] = null;
+      _updateTrack(trackId, (t) => t.copyWith(isMuted: false));
+      unawaited(_setTrackOutputGainInternal(trackId, restore));
+      return;
+    }
+
+    _preMuteTrackOutputDb[trackId] = _fxTrackOutputDb[trackId];
+    _updateTrack(trackId, (t) => t.copyWith(isMuted: true));
+    unawaited(_setTrackOutputGainInternal(trackId, _trackMinOutputDb));
   }
 
   void toggleTrackDelaySend(int trackId) {
@@ -373,12 +397,32 @@ class LooperProvider extends ChangeNotifier {
     if (trackId < 0 || trackId >= _fxTrackOutputDb.length) {
       return;
     }
-    final double clamped = value.clamp(-60.0, 12.0);
-    _fxTrackOutputDb[trackId] = clamped;
+    final double clamped = value.clamp(_trackMinOutputDb, _trackMaxOutputDb);
+    final bool shouldMute =
+        (clamped - _trackMinOutputDb).abs() <= _muteThreshold;
+    final bool isMuted = _state.tracks[trackId].isMuted;
+
+    // Minimum mixer gain means muted, including manual mixer moves.
+    if (!isMuted && shouldMute) {
+      _preMuteTrackOutputDb[trackId] = _fxTrackOutputDb[trackId];
+      _updateTrack(trackId, (t) => t.copyWith(isMuted: true));
+    }
+
+    // If a muted track is moved above silence in the mixer, unmute it.
+    if (isMuted && !shouldMute) {
+      _preMuteTrackOutputDb[trackId] = null;
+      _updateTrack(trackId, (t) => t.copyWith(isMuted: false));
+    }
+
+    await _setTrackOutputGainInternal(trackId, clamped);
+  }
+
+  Future<void> _setTrackOutputGainInternal(int trackId, double db) async {
+    _fxTrackOutputDb[trackId] = db;
     notifyListeners();
     final native = _native;
     if (native == null) return;
-    await native.setTrackOutputGainDb(trackId: trackId, db: clamped);
+    await native.setTrackOutputGainDb(trackId: trackId, db: db);
   }
 
   Future<void> resetAllFx() async {
@@ -400,6 +444,7 @@ class LooperProvider extends ChangeNotifier {
     _fxMasterOutputDb = 0.0;
     for (int i = 0; i < _fxTrackOutputDb.length; i++) {
       _fxTrackOutputDb[i] = 0.0;
+      _preMuteTrackOutputDb[i] = null;
     }
     notifyListeners();
     await _applyMasterOutputGain();
