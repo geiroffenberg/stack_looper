@@ -5,6 +5,7 @@ import '../constants/app_constants.dart';
 import '../models/looper_state.dart';
 import '../providers/looper_provider.dart';
 import '../screens/fx_screen.dart';
+import '../screens/settings_screen.dart';
 import '../widgets/top_menu_bar.dart';
 import '../widgets/settings_bar.dart';
 import '../widgets/track_card.dart';
@@ -148,7 +149,11 @@ class _LooperScreenState extends State<LooperScreen>
                     recordArmed: provider.recordArmed,
                     armedBlinkOn: provider.armedBlinkOn,
                     onSettingsPressed: () {
-                      // TODO: Implement settings menu
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const SettingsScreen(),
+                        ),
+                      );
                     },
                   ),
                 ],
