@@ -54,22 +54,21 @@ class NativeAudioEngine {
   Future<void> startMetronome() =>
       _channel.invokeMethod<void>('startMetronome');
 
-  Future<void> stopMetronome() =>
-      _channel.invokeMethod<void>('stopMetronome');
+  Future<void> stopMetronome() => _channel.invokeMethod<void>('stopMetronome');
 
-    Future<void> setMetronomeAudible(bool audible) async {
-      try {
-        await _channel.invokeMethod<void>('setMetronomeAudible', audible);
-      } on MissingPluginException {
-        debugPrint(
-          '[NativeAudioEngine] setMetronomeAudible unavailable; full restart required for native update.',
-        );
-      } on PlatformException catch (error) {
-        debugPrint(
-          '[NativeAudioEngine] setMetronomeAudible failed: ${error.code} ${error.message}',
-        );
-      }
+  Future<void> setMetronomeAudible(bool audible) async {
+    try {
+      await _channel.invokeMethod<void>('setMetronomeAudible', audible);
+    } on MissingPluginException {
+      debugPrint(
+        '[NativeAudioEngine] setMetronomeAudible unavailable; full restart required for native update.',
+      );
+    } on PlatformException catch (error) {
+      debugPrint(
+        '[NativeAudioEngine] setMetronomeAudible failed: ${error.code} ${error.message}',
+      );
     }
+  }
 
   /// Current transport position in sample frames. Master clock.
   Future<int> currentFrame() async {
@@ -125,8 +124,7 @@ class NativeAudioEngine {
 
   /// How many mic samples have been captured into this track so far.
   Future<int> trackRecordedSamples(int trackId) async {
-    final n =
-        await _channel.invokeMethod<int>('trackRecordedSamples', trackId);
+    final n = await _channel.invokeMethod<int>('trackRecordedSamples', trackId);
     return n ?? 0;
   }
 
@@ -138,7 +136,9 @@ class NativeAudioEngine {
       'trackId': trackId,
       'bucketCount': bucketCount,
     });
-    return raw?.map((value) => (value as num).toDouble()).toList(growable: false) ??
+    return raw
+            ?.map((value) => (value as num).toDouble())
+            .toList(growable: false) ??
         List<double>.filled(bucketCount, 0.0, growable: false);
   }
 
@@ -199,9 +199,13 @@ class NativeAudioEngine {
     try {
       await _channel.invokeMethod<void>('setHighPassHz', hz);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setHighPassHz unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setHighPassHz unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setHighPassHz failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setHighPassHz failed: ${error.code} ${error.message}',
+      );
     }
   }
 
@@ -209,9 +213,13 @@ class NativeAudioEngine {
     try {
       await _channel.invokeMethod<void>('setLowPassHz', hz);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setLowPassHz unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setLowPassHz unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setLowPassHz failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setLowPassHz failed: ${error.code} ${error.message}',
+      );
     }
   }
 
@@ -219,9 +227,13 @@ class NativeAudioEngine {
     try {
       await _channel.invokeMethod<void>('setEqLowDb', db);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setEqLowDb unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setEqLowDb unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setEqLowDb failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setEqLowDb failed: ${error.code} ${error.message}',
+      );
     }
   }
 
@@ -229,9 +241,13 @@ class NativeAudioEngine {
     try {
       await _channel.invokeMethod<void>('setEqMidDb', db);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setEqMidDb unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setEqMidDb unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setEqMidDb failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setEqMidDb failed: ${error.code} ${error.message}',
+      );
     }
   }
 
@@ -239,9 +255,13 @@ class NativeAudioEngine {
     try {
       await _channel.invokeMethod<void>('setEqHighDb', db);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setEqHighDb unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setEqHighDb unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setEqHighDb failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setEqHighDb failed: ${error.code} ${error.message}',
+      );
     }
   }
 
@@ -249,19 +269,13 @@ class NativeAudioEngine {
     try {
       await _channel.invokeMethod<void>('setCompressorAmount', amount);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setCompressorAmount unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setCompressorAmount unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setCompressorAmount failed: ${error.code} ${error.message}');
-    }
-  }
-
-  Future<void> setDistortionAmount(double amount) async {
-    try {
-      await _channel.invokeMethod<void>('setDistortionAmount', amount);
-    } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setDistortionAmount unavailable; full restart required.');
-    } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setDistortionAmount failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setCompressorAmount failed: ${error.code} ${error.message}',
+      );
     }
   }
 
@@ -269,19 +283,13 @@ class NativeAudioEngine {
     try {
       await _channel.invokeMethod<void>('setSaturationAmount', amount);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setSaturationAmount unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setSaturationAmount unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setSaturationAmount failed: ${error.code} ${error.message}');
-    }
-  }
-
-  Future<void> setDelaySend(double amount) async {
-    try {
-      await _channel.invokeMethod<void>('setDelaySend', amount);
-    } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setDelaySend unavailable; full restart required.');
-    } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setDelaySend failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setSaturationAmount failed: ${error.code} ${error.message}',
+      );
     }
   }
 
@@ -289,9 +297,13 @@ class NativeAudioEngine {
     try {
       await _channel.invokeMethod<void>('setDelayDivision', division);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setDelayDivision unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setDelayDivision unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setDelayDivision failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setDelayDivision failed: ${error.code} ${error.message}',
+      );
     }
   }
 
@@ -299,19 +311,41 @@ class NativeAudioEngine {
     try {
       await _channel.invokeMethod<void>('setDelayFeel', feel);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setDelayFeel unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setDelayFeel unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setDelayFeel failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setDelayFeel failed: ${error.code} ${error.message}',
+      );
     }
   }
 
-  Future<void> setReverbSend(double amount) async {
+  Future<void> setDelayFeedback(double amount) async {
     try {
-      await _channel.invokeMethod<void>('setReverbSend', amount);
+      await _channel.invokeMethod<void>('setDelayFeedback', amount);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setReverbSend unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setDelayFeedback unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setReverbSend failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setDelayFeedback failed: ${error.code} ${error.message}',
+      );
+    }
+  }
+
+  Future<void> setDelayInput(double amount) async {
+    try {
+      await _channel.invokeMethod<void>('setDelayInput', amount);
+    } on MissingPluginException {
+      debugPrint(
+        '[NativeAudioEngine] setDelayInput unavailable; full restart required.',
+      );
+    } on PlatformException catch (error) {
+      debugPrint(
+        '[NativeAudioEngine] setDelayInput failed: ${error.code} ${error.message}',
+      );
     }
   }
 
@@ -319,89 +353,27 @@ class NativeAudioEngine {
     try {
       await _channel.invokeMethod<void>('setReverbRoomSize', amount);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setReverbRoomSize unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setReverbRoomSize unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setReverbRoomSize failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setReverbRoomSize failed: ${error.code} ${error.message}',
+      );
     }
   }
 
-  Future<void> setDjFilterAmount(double amount) async {
+  Future<void> setReverbDamping(double amount) async {
     try {
-      await _channel.invokeMethod<void>('setDjFilterAmount', amount);
+      await _channel.invokeMethod<void>('setReverbDamping', amount);
     } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setDjFilterAmount unavailable; full restart required.');
+      debugPrint(
+        '[NativeAudioEngine] setReverbDamping unavailable; full restart required.',
+      );
     } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setDjFilterAmount failed: ${error.code} ${error.message}');
-    }
-  }
-
-  Future<void> setDjFilterResonance(double amount) async {
-    try {
-      await _channel.invokeMethod<void>('setDjFilterResonance', amount);
-    } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setDjFilterResonance unavailable; full restart required.');
-    } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setDjFilterResonance failed: ${error.code} ${error.message}');
-    }
-  }
-
-  Future<void> setBeatRepeatMix(double amount) async {
-    try {
-      await _channel.invokeMethod<void>('setBeatRepeatMix', amount);
-    } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setBeatRepeatMix unavailable; full restart required.');
-    } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setBeatRepeatMix failed: ${error.code} ${error.message}');
-    }
-  }
-
-  Future<void> setBeatRepeatDivision(int division) async {
-    try {
-      await _channel.invokeMethod<void>('setBeatRepeatDivision', division);
-    } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setBeatRepeatDivision unavailable; full restart required.');
-    } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setBeatRepeatDivision failed: ${error.code} ${error.message}');
-    }
-  }
-
-  Future<void> setTransGateAmount(double amount) async {
-    try {
-      await _channel.invokeMethod<void>('setTransGateAmount', amount);
-    } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setTransGateAmount unavailable; full restart required.');
-    } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setTransGateAmount failed: ${error.code} ${error.message}');
-    }
-  }
-
-  Future<void> setTransGateDivision(int division) async {
-    try {
-      await _channel.invokeMethod<void>('setTransGateDivision', division);
-    } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setTransGateDivision unavailable; full restart required.');
-    } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setTransGateDivision failed: ${error.code} ${error.message}');
-    }
-  }
-
-  Future<void> setNoiseRiserAmount(double amount) async {
-    try {
-      await _channel.invokeMethod<void>('setNoiseRiserAmount', amount);
-    } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setNoiseRiserAmount unavailable; full restart required.');
-    } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setNoiseRiserAmount failed: ${error.code} ${error.message}');
-    }
-  }
-
-  Future<void> setTapeStopAmount(double amount) async {
-    try {
-      await _channel.invokeMethod<void>('setTapeStopAmount', amount);
-    } on MissingPluginException {
-      debugPrint('[NativeAudioEngine] setTapeStopAmount unavailable; full restart required.');
-    } on PlatformException catch (error) {
-      debugPrint('[NativeAudioEngine] setTapeStopAmount failed: ${error.code} ${error.message}');
+      debugPrint(
+        '[NativeAudioEngine] setReverbDamping failed: ${error.code} ${error.message}',
+      );
     }
   }
 
@@ -426,46 +398,49 @@ class NativeAudioEngine {
   }
 
   Future<double> trackOutputGainDb(int trackId) async {
-    final value = await _channel.invokeMethod<double>('trackOutputGainDb', trackId);
+    final value = await _channel.invokeMethod<double>(
+      'trackOutputGainDb',
+      trackId,
+    );
     return value ?? 0.0;
   }
 
-  Future<void> setTrackDelaySendEnabled({
+  Future<void> setTrackDelaySendLevel({
     required int trackId,
-    required bool enabled,
+    required double level,
   }) async {
     try {
-      await _channel.invokeMethod<void>('setTrackDelaySendEnabled', {
+      await _channel.invokeMethod<void>('setTrackDelaySendLevel', {
         'trackId': trackId,
-        'enabled': enabled,
+        'level': level,
       });
     } on MissingPluginException {
       debugPrint(
-        '[NativeAudioEngine] setTrackDelaySendEnabled unavailable; full restart required.',
+        '[NativeAudioEngine] setTrackDelaySendLevel unavailable; full restart required.',
       );
     } on PlatformException catch (error) {
       debugPrint(
-        '[NativeAudioEngine] setTrackDelaySendEnabled failed: ${error.code} ${error.message}',
+        '[NativeAudioEngine] setTrackDelaySendLevel failed: ${error.code} ${error.message}',
       );
     }
   }
 
-  Future<void> setTrackReverbSendEnabled({
+  Future<void> setTrackReverbSendLevel({
     required int trackId,
-    required bool enabled,
+    required double level,
   }) async {
     try {
-      await _channel.invokeMethod<void>('setTrackReverbSendEnabled', {
+      await _channel.invokeMethod<void>('setTrackReverbSendLevel', {
         'trackId': trackId,
-        'enabled': enabled,
+        'level': level,
       });
     } on MissingPluginException {
       debugPrint(
-        '[NativeAudioEngine] setTrackReverbSendEnabled unavailable; full restart required.',
+        '[NativeAudioEngine] setTrackReverbSendLevel unavailable; full restart required.',
       );
     } on PlatformException catch (error) {
       debugPrint(
-        '[NativeAudioEngine] setTrackReverbSendEnabled failed: ${error.code} ${error.message}',
+        '[NativeAudioEngine] setTrackReverbSendLevel failed: ${error.code} ${error.message}',
       );
     }
   }

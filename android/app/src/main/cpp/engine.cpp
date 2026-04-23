@@ -331,8 +331,8 @@ oboe::Result Engine::Start() {
   for (int i = 0; i < kMaxTracks; ++i) {
     track_output_gain_target_[i].store(1.0f, std::memory_order_release);
     track_output_gain_smoothed_[i] = 1.0f;
-    track_delay_send_enabled_[i].store(true, std::memory_order_release);
-    track_reverb_send_enabled_[i].store(true, std::memory_order_release);
+    track_delay_send_level_[i].store(0.0f, std::memory_order_release);
+    track_reverb_send_level_[i].store(0.0f, std::memory_order_release);
   }
   for (int i = 0; i < 5; ++i) {
     biquad_b0_[i] = 1.0f;
@@ -343,13 +343,6 @@ oboe::Result Engine::Start() {
     biquad_z1_[i] = 0.0f;
     biquad_z2_[i] = 0.0f;
   }
-  dj_filter_b0_ = 1.0f;
-  dj_filter_b1_ = 0.0f;
-  dj_filter_b2_ = 0.0f;
-  dj_filter_a1_ = 0.0f;
-  dj_filter_a2_ = 0.0f;
-  dj_filter_z1_ = 0.0f;
-  dj_filter_z2_ = 0.0f;
   compressor_env_ = 0.0f;
   compressor_gain_ = 1.0f;
   delay_buffer_.assign(static_cast<size_t>(sample_rate_ * 2), 0.0f);
@@ -363,20 +356,6 @@ oboe::Result Engine::Start() {
   reverb_write_pos_[1] = 0;
   reverb_write_pos_[2] = 0;
   reverb_lowpass_state_ = 0.0f;
-  perf_history_buffer_.assign(static_cast<size_t>(sample_rate_ * 4), 0.0f);
-  perf_history_write_pos_ = 0;
-  beat_repeat_active_ = false;
-  beat_repeat_capture_start_ = 0;
-  beat_repeat_capture_length_ = 0;
-  beat_repeat_last_division_ = 8;
-  beat_repeat_play_pos_ = 0;
-  noise_state_ = 0x12345678u;
-  noise_lowpass_state_ = 0.0f;
-  tape_stop_buffer_.assign(static_cast<size_t>(sample_rate_ * 4), 0.0f);
-  tape_stop_write_pos_ = 0;
-  tape_stop_active_ = false;
-  tape_stop_read_pos_ = 0.0f;
-  tape_stop_lowpass_state_ = 0.0f;
 
   // Start INPUT first so mic data is already flowing by the time the output
   // callback begins asking us for samples.
@@ -591,10 +570,10 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
           track_output_gain_target_[track_id].load(std::memory_order_acquire);
       float gain = track_output_gain_smoothed_[track_id];
       constexpr float kTrackGainSmoothing = 0.0025f;
-      const bool delay_send_enabled =
-          track_delay_send_enabled_[track_id].load(std::memory_order_acquire);
-      const bool reverb_send_enabled =
-          track_reverb_send_enabled_[track_id].load(std::memory_order_acquire);
+      const float delay_send_level = Clamp01(
+          track_delay_send_level_[track_id].load(std::memory_order_acquire));
+      const float reverb_send_level = Clamp01(
+          track_reverb_send_level_[track_id].load(std::memory_order_acquire));
       int32_t pos = t.play_pos;
       if (pos >= len) pos = 0;  // defensive
       const float* src = t.buffer.data();
@@ -602,11 +581,11 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
         gain += (gain_target - gain) * kTrackGainSmoothing;
         const float sample = src[pos] * gain;
         out[i] += sample;
-        if (delay_send_enabled) {
-          delay_send_scratch_[i] += sample;
+        if (delay_send_level > 0.0001f) {
+          delay_send_scratch_[i] += sample * delay_send_level;
         }
-        if (reverb_send_enabled) {
-          reverb_send_scratch_[i] += sample;
+        if (reverb_send_level > 0.0001f) {
+          reverb_send_scratch_[i] += sample * reverb_send_level;
         }
         if (++pos >= len) pos = 0;
       }
@@ -667,57 +646,18 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
       out[i] = x;
     }
 
-    // 7) DJ performance filter. This is separate from the master HP/LP pair:
-    //    a single bipolar sweep where <0 is low-pass, >0 is high-pass.
-    const float dj_filter_amount =
-        ClampSigned(dj_filter_amount_.load(std::memory_order_acquire));
-    const float dj_filter_resonance =
-        Clamp01(dj_filter_resonance_.load(std::memory_order_acquire));
-    if (std::fabs(dj_filter_amount) > 0.0001f) {
-      const float q = 0.707f + dj_filter_resonance * 7.0f;
-      const BiquadCoeffs c = dj_filter_amount < 0.0f
-          ? MakeLowPass(
-                static_cast<float>(sample_rate_),
-                LogLerpHz(180.0f, 20000.0f, 1.0f - (-dj_filter_amount)),
-                q)
-          : MakeHighPass(
-                static_cast<float>(sample_rate_),
-                LogLerpHz(20.0f, 12000.0f, dj_filter_amount),
-                q);
-      dj_filter_b0_ = c.b0;
-      dj_filter_b1_ = c.b1;
-      dj_filter_b2_ = c.b2;
-      dj_filter_a1_ = c.a1;
-      dj_filter_a2_ = c.a2;
-      for (int32_t i = 0; i < num_frames; ++i) {
-        const float x = out[i];
-        const float y = dj_filter_b0_ * x + dj_filter_z1_;
-        dj_filter_z1_ = dj_filter_b1_ * x - dj_filter_a1_ * y + dj_filter_z2_;
-        dj_filter_z2_ = dj_filter_b2_ * x - dj_filter_a2_ * y;
-        out[i] = y;
-      }
-    } else {
-      dj_filter_z1_ = 0.0f;
-      dj_filter_z2_ = 0.0f;
-    }
-
-    // 8) Dynamics and color stage.
+    // 7) Dynamics and saturation stage.
     const float compressor_amount =
         Clamp01(compressor_amount_.load(std::memory_order_acquire));
-    const float distortion_amount =
-        Clamp01(distortion_amount_.load(std::memory_order_acquire));
     const float saturation_amount =
         Clamp01(saturation_amount_.load(std::memory_order_acquire));
-    if (compressor_amount > 0.0001f ||
-        distortion_amount > 0.0001f ||
-        saturation_amount > 0.0001f) {
+    if (compressor_amount > 0.0001f || saturation_amount > 0.0001f) {
       const float attack = 0.02f;
       const float release = 0.00012f;
       const float threshold_db = -8.0f - 28.0f * compressor_amount;
       const float ratio = 1.0f + compressor_amount * 19.0f;
       float env = compressor_env_;
       float comp_gain = compressor_gain_;
-      const float dist_drive = 1.0f + distortion_amount * 24.0f;
       const float sat_drive = 1.0f + saturation_amount * 8.0f;
       const float sat_norm = std::tanh(sat_drive);
 
@@ -739,12 +679,6 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
           x *= comp_gain;
         }
 
-        if (distortion_amount > 0.0001f) {
-          const float driven = x * dist_drive;
-          const float hard = std::max(-1.0f, std::min(driven, 1.0f));
-          x = x * (1.0f - distortion_amount) + hard * distortion_amount;
-        }
-
         if (saturation_amount > 0.0001f && sat_norm > 0.000001f) {
           const float soft = std::tanh(x * sat_drive) / sat_norm;
           x = x * (1.0f - saturation_amount) + soft * saturation_amount;
@@ -757,143 +691,20 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
       compressor_gain_ = comp_gain;
     }
 
-    // 9) Performance rhythm/gesture FX.
-    const float beat_repeat_mix =
-        Clamp01(beat_repeat_mix_.load(std::memory_order_acquire));
-    const int32_t beat_repeat_division =
-        NormalizeDivision(beat_repeat_division_.load(std::memory_order_acquire));
-    const float trans_gate_amount =
-        Clamp01(trans_gate_amount_.load(std::memory_order_acquire));
-    const int32_t trans_gate_division =
-        NormalizeDivision(trans_gate_division_.load(std::memory_order_acquire));
-    const float noise_riser_amount =
-        Clamp01(noise_riser_amount_.load(std::memory_order_acquire));
-    const float tape_stop_amount =
-        Clamp01(tape_stop_amount_.load(std::memory_order_acquire));
-
-    int32_t history_write = perf_history_write_pos_;
-    const int32_t history_len = static_cast<int32_t>(perf_history_buffer_.size());
-    bool repeat_active = beat_repeat_active_;
-    int32_t repeat_capture_start = beat_repeat_capture_start_;
-    int32_t repeat_capture_length = beat_repeat_capture_length_;
-    int32_t repeat_last_division = beat_repeat_last_division_;
-    int32_t repeat_play_pos = beat_repeat_play_pos_;
-    uint32_t noise_state = noise_state_;
-    float noise_lp = noise_lowpass_state_;
-    int32_t tape_write = tape_stop_write_pos_;
-    const int32_t tape_len = static_cast<int32_t>(tape_stop_buffer_.size());
-    bool tape_active = tape_stop_active_;
-    float tape_read = tape_stop_read_pos_;
-    float tape_lp = tape_stop_lowpass_state_;
-
-    const int32_t repeat_length =
-        std::max(1, std::min(history_len - 1, (spb * 4) / beat_repeat_division));
-    const int32_t gate_length =
-        std::max(1, (spb * 4) / trans_gate_division);
-
-    for (int32_t i = 0; i < num_frames; ++i) {
-      float x = out[i];
-
-      if (history_len > 0) {
-        perf_history_buffer_[history_write] = x;
-        if (++history_write >= history_len) history_write = 0;
-      }
-
-      if (beat_repeat_mix > 0.0001f && history_len > 1) {
-        if (!repeat_active || repeat_last_division != beat_repeat_division ||
-            repeat_capture_length != repeat_length) {
-          repeat_active = true;
-          repeat_capture_length = repeat_length;
-          repeat_capture_start = history_write - repeat_capture_length;
-          while (repeat_capture_start < 0) repeat_capture_start += history_len;
-          repeat_last_division = beat_repeat_division;
-          repeat_play_pos = 0;
-        }
-        const int32_t repeat_index =
-            (repeat_capture_start + repeat_play_pos) % history_len;
-        const float repeated = perf_history_buffer_[repeat_index];
-        x = x * (1.0f - beat_repeat_mix) + repeated * beat_repeat_mix;
-        ++repeat_play_pos;
-        if (repeat_play_pos >= repeat_capture_length) repeat_play_pos = 0;
-      } else {
-        repeat_active = false;
-        repeat_play_pos = 0;
-      }
-
-      if (trans_gate_amount > 0.0001f) {
-        const int64_t gate_frame = buf_start + i;
-        const int32_t gate_phase = static_cast<int32_t>(gate_frame % gate_length);
-        const float gate_norm = static_cast<float>(gate_phase) /
-            static_cast<float>(std::max(1, gate_length - 1));
-        const float gate_value = gate_norm < 0.52f ? 1.0f : 0.08f;
-        const float gate_mix = (1.0f - trans_gate_amount) +
-            gate_value * trans_gate_amount;
-        x *= gate_mix;
-      }
-
-      if (noise_riser_amount > 0.0001f) {
-        noise_state = noise_state * 1664525u + 1013904223u;
-        const float white =
-            (static_cast<float>((noise_state >> 8) & 0x00FFFFFFu) /
-                8388607.5f) - 1.0f;
-        noise_lp += (white - noise_lp) * 0.02f;
-        const float airy = white - noise_lp;
-        x += airy * noise_riser_amount * noise_riser_amount * 0.4f;
-      }
-
-      if (tape_len > 1) {
-        tape_stop_buffer_[tape_write] = x;
-        if (tape_stop_amount > 0.0001f) {
-          if (!tape_active) {
-            tape_active = true;
-            tape_read = static_cast<float>((tape_write - 1 + tape_len) % tape_len);
-            tape_lp = x;
-          }
-          const int32_t read0 = static_cast<int32_t>(tape_read) % tape_len;
-          const int32_t read1 = (read0 + 1) % tape_len;
-          const float frac = tape_read - std::floor(tape_read);
-          const float slowed = tape_stop_buffer_[read0] +
-              (tape_stop_buffer_[read1] - tape_stop_buffer_[read0]) * frac;
-          const float speed = std::max(0.03f, 1.0f - tape_stop_amount * 0.97f);
-          tape_read += speed;
-          while (tape_read >= tape_len) tape_read -= tape_len;
-          tape_lp += (slowed - tape_lp) * (0.24f - tape_stop_amount * 0.20f);
-          x = x * (1.0f - tape_stop_amount) + tape_lp * tape_stop_amount;
-        } else {
-          tape_active = false;
-        }
-        if (++tape_write >= tape_len) tape_write = 0;
-      }
-
-      out[i] = x;
-    }
-
-    perf_history_write_pos_ = history_write;
-    beat_repeat_active_ = repeat_active;
-    beat_repeat_capture_start_ = repeat_capture_start;
-    beat_repeat_capture_length_ = repeat_capture_length;
-    beat_repeat_last_division_ = repeat_last_division;
-    beat_repeat_play_pos_ = repeat_play_pos;
-    noise_state_ = noise_state;
-    noise_lowpass_state_ = noise_lp;
-    tape_stop_write_pos_ = tape_write;
-    tape_stop_active_ = tape_active;
-    tape_stop_read_pos_ = tape_read;
-    tape_stop_lowpass_state_ = tape_lp;
-
-    // 10) Time FX sends: tempo-agnostic mono delay + compact feedback reverb.
-    const float delay_send =
-        Clamp01(delay_send_.load(std::memory_order_acquire));
+    // 8) Time FX sends: tempo-agnostic mono delay + compact feedback reverb.
     const int32_t delay_division =
       NormalizeDivision(delay_division_.load(std::memory_order_acquire));
     const int32_t delay_feel =
       NormalizeDelayFeel(delay_feel_.load(std::memory_order_acquire));
-    const float reverb_send =
-        Clamp01(reverb_send_.load(std::memory_order_acquire));
+    const float delay_feedback =
+      std::min(0.95f, Clamp01(delay_feedback_.load(std::memory_order_acquire)));
+    const float delay_input =
+      Clamp01(delay_input_.load(std::memory_order_acquire));
     const float reverb_room_size =
         Clamp01(reverb_room_size_.load(std::memory_order_acquire));
-    if (delay_send > 0.0001f || reverb_send > 0.0001f) {
-      if (!delay_buffer_.empty()) {
+    const float reverb_damping =
+      Clamp01(reverb_damping_.load(std::memory_order_acquire));
+    if (!delay_buffer_.empty()) {
         const int32_t delay_len = static_cast<int32_t>(delay_buffer_.size());
         const float base_delay_samples =
           static_cast<float>(std::max(1, (spb * 4) / delay_division));
@@ -929,13 +740,11 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
           const int32_t read =
               (delay_write - delay_samples + delay_len) % delay_len;
           const float tap = delay_buffer_[read];
-          delay_buffer_[delay_write] = delay_in + (delay_send > 0.0001f ? tap * 0.35f : 0.0f);
+          delay_buffer_[delay_write] =
+              (delay_in * delay_input) + (tap * delay_feedback);
 
-          if (delay_send > 0.0001f) {
-            x += tap * delay_send * 0.55f;
-          }
+          x += tap * 0.55f;
 
-          if (reverb_send > 0.0001f) {
             const int32_t pre_read =
                 (delay_write - reverb_pre_delay + delay_len) % delay_len;
             const float rev_in = reverb_source + delay_buffer_[pre_read] * 0.35f;
@@ -957,9 +766,9 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
               if (pos >= usable_len) pos = 0;
               reverb_positions[lane] = pos;
             }
-            rev_lp += (rev_wet - rev_lp) * (0.07f - reverb_room_size * 0.04f);
-            x += rev_lp * reverb_send * (0.34f + reverb_room_size * 0.28f);
-          }
+            const float reverb_lp_coeff = 0.02f + ((1.0f - reverb_damping) * 0.10f);
+            rev_lp += (rev_wet - rev_lp) * reverb_lp_coeff;
+            x += rev_lp * (0.34f + reverb_room_size * 0.28f);
 
           if (++delay_write >= delay_len) delay_write = 0;
 
@@ -969,10 +778,9 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
         delay_write_pos_ = delay_write;
         reverb_write_pos_ = reverb_positions;
         reverb_lowpass_state_ = rev_lp;
-      }
     }
 
-    // 11) Master limiter: hard-limits to the configured
+    // 9) Master limiter: hard-limits to the configured
     //    ceiling in linear amplitude. This is intentionally simple and
     //    realtime-safe; we can replace it with lookahead later.
     const float limiter =
@@ -982,7 +790,7 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
       out[i] = s > limiter ? limiter : (s < -limiter ? -limiter : s);
     }
 
-    // 12) Final safety clamp. Summing multiple tracks + click can exceed
+    // 10) Final safety clamp. Summing multiple tracks + click can exceed
     //    [-1,1] if misconfigured; this keeps output bounded.
     //    clamp is ugly but cheap and prevents speaker-destroying transients;
     //    a proper limiter can come later if it turns out to matter.
@@ -1080,30 +888,32 @@ float Engine::TrackOutputGainDb(int32_t track_id) const {
   return 20.0f * std::log10(safe);
 }
 
-void Engine::SetTrackDelaySendEnabled(int32_t track_id, bool enabled) {
+void Engine::SetTrackDelaySendLevel(int32_t track_id, float level) {
   if (track_id < 0 || track_id >= kMaxTracks) return;
-  track_delay_send_enabled_[track_id].store(enabled, std::memory_order_release);
-  LOGI("SetTrackDelaySendEnabled: track=%d enabled=%s",
+  const float clamped = Clamp01(level);
+  track_delay_send_level_[track_id].store(clamped, std::memory_order_release);
+  LOGI("SetTrackDelaySendLevel: track=%d level=%.3f",
        track_id,
-       enabled ? "true" : "false");
+       clamped);
 }
 
-bool Engine::TrackDelaySendEnabled(int32_t track_id) const {
-  if (track_id < 0 || track_id >= kMaxTracks) return true;
-  return track_delay_send_enabled_[track_id].load(std::memory_order_acquire);
+float Engine::TrackDelaySendLevel(int32_t track_id) const {
+  if (track_id < 0 || track_id >= kMaxTracks) return 0.0f;
+  return Clamp01(track_delay_send_level_[track_id].load(std::memory_order_acquire));
 }
 
-void Engine::SetTrackReverbSendEnabled(int32_t track_id, bool enabled) {
+void Engine::SetTrackReverbSendLevel(int32_t track_id, float level) {
   if (track_id < 0 || track_id >= kMaxTracks) return;
-  track_reverb_send_enabled_[track_id].store(enabled, std::memory_order_release);
-  LOGI("SetTrackReverbSendEnabled: track=%d enabled=%s",
+  const float clamped = Clamp01(level);
+  track_reverb_send_level_[track_id].store(clamped, std::memory_order_release);
+  LOGI("SetTrackReverbSendLevel: track=%d level=%.3f",
        track_id,
-       enabled ? "true" : "false");
+       clamped);
 }
 
-bool Engine::TrackReverbSendEnabled(int32_t track_id) const {
-  if (track_id < 0 || track_id >= kMaxTracks) return true;
-  return track_reverb_send_enabled_[track_id].load(std::memory_order_acquire);
+float Engine::TrackReverbSendLevel(int32_t track_id) const {
+  if (track_id < 0 || track_id >= kMaxTracks) return 0.0f;
+  return Clamp01(track_reverb_send_level_[track_id].load(std::memory_order_acquire));
 }
 
 void Engine::SetHighPassHz(float hz) {
@@ -1166,16 +976,6 @@ float Engine::CompressorAmount() const {
   return compressor_amount_.load(std::memory_order_acquire);
 }
 
-void Engine::SetDistortionAmount(float amount) {
-  const float clamped = Clamp01(amount);
-  distortion_amount_.store(clamped, std::memory_order_release);
-  LOGI("SetDistortionAmount: %.3f", clamped);
-}
-
-float Engine::DistortionAmount() const {
-  return distortion_amount_.load(std::memory_order_acquire);
-}
-
 void Engine::SetSaturationAmount(float amount) {
   const float clamped = Clamp01(amount);
   saturation_amount_.store(clamped, std::memory_order_release);
@@ -1184,16 +984,6 @@ void Engine::SetSaturationAmount(float amount) {
 
 float Engine::SaturationAmount() const {
   return saturation_amount_.load(std::memory_order_acquire);
-}
-
-void Engine::SetDelaySend(float amount) {
-  const float clamped = Clamp01(amount);
-  delay_send_.store(clamped, std::memory_order_release);
-  LOGI("SetDelaySend: %.3f", clamped);
-}
-
-float Engine::DelaySend() const {
-  return delay_send_.load(std::memory_order_acquire);
 }
 
 void Engine::SetDelayDivision(int32_t division) {
@@ -1216,14 +1006,24 @@ int32_t Engine::DelayFeel() const {
   return delay_feel_.load(std::memory_order_acquire);
 }
 
-void Engine::SetReverbSend(float amount) {
-  const float clamped = Clamp01(amount);
-  reverb_send_.store(clamped, std::memory_order_release);
-  LOGI("SetReverbSend: %.3f", clamped);
+void Engine::SetDelayFeedback(float amount) {
+  const float clamped = std::min(0.95f, Clamp01(amount));
+  delay_feedback_.store(clamped, std::memory_order_release);
+  LOGI("SetDelayFeedback: %.3f", clamped);
 }
 
-float Engine::ReverbSend() const {
-  return reverb_send_.load(std::memory_order_acquire);
+float Engine::DelayFeedback() const {
+  return delay_feedback_.load(std::memory_order_acquire);
+}
+
+void Engine::SetDelayInput(float amount) {
+  const float clamped = Clamp01(amount);
+  delay_input_.store(clamped, std::memory_order_release);
+  LOGI("SetDelayInput: %.3f", clamped);
+}
+
+float Engine::DelayInput() const {
+  return delay_input_.load(std::memory_order_acquire);
 }
 
 void Engine::SetReverbRoomSize(float amount) {
@@ -1236,84 +1036,14 @@ float Engine::ReverbRoomSize() const {
   return reverb_room_size_.load(std::memory_order_acquire);
 }
 
-void Engine::SetDjFilterAmount(float amount) {
-  const float clamped = ClampSigned(amount);
-  dj_filter_amount_.store(clamped, std::memory_order_release);
-  LOGI("SetDjFilterAmount: %.3f", clamped);
-}
-
-float Engine::DjFilterAmount() const {
-  return dj_filter_amount_.load(std::memory_order_acquire);
-}
-
-void Engine::SetDjFilterResonance(float amount) {
+void Engine::SetReverbDamping(float amount) {
   const float clamped = Clamp01(amount);
-  dj_filter_resonance_.store(clamped, std::memory_order_release);
-  LOGI("SetDjFilterResonance: %.3f", clamped);
+  reverb_damping_.store(clamped, std::memory_order_release);
+  LOGI("SetReverbDamping: %.3f", clamped);
 }
 
-float Engine::DjFilterResonance() const {
-  return dj_filter_resonance_.load(std::memory_order_acquire);
-}
-
-void Engine::SetBeatRepeatMix(float amount) {
-  const float clamped = Clamp01(amount);
-  beat_repeat_mix_.store(clamped, std::memory_order_release);
-  LOGI("SetBeatRepeatMix: %.3f", clamped);
-}
-
-float Engine::BeatRepeatMix() const {
-  return beat_repeat_mix_.load(std::memory_order_acquire);
-}
-
-void Engine::SetBeatRepeatDivision(int32_t division) {
-  const int32_t normalized = NormalizeDivision(division);
-  beat_repeat_division_.store(normalized, std::memory_order_release);
-  LOGI("SetBeatRepeatDivision: %d", normalized);
-}
-
-int32_t Engine::BeatRepeatDivision() const {
-  return beat_repeat_division_.load(std::memory_order_acquire);
-}
-
-void Engine::SetTransGateAmount(float amount) {
-  const float clamped = Clamp01(amount);
-  trans_gate_amount_.store(clamped, std::memory_order_release);
-  LOGI("SetTransGateAmount: %.3f", clamped);
-}
-
-float Engine::TransGateAmount() const {
-  return trans_gate_amount_.load(std::memory_order_acquire);
-}
-
-void Engine::SetTransGateDivision(int32_t division) {
-  const int32_t normalized = NormalizeDivision(division);
-  trans_gate_division_.store(normalized, std::memory_order_release);
-  LOGI("SetTransGateDivision: %d", normalized);
-}
-
-int32_t Engine::TransGateDivision() const {
-  return trans_gate_division_.load(std::memory_order_acquire);
-}
-
-void Engine::SetNoiseRiserAmount(float amount) {
-  const float clamped = Clamp01(amount);
-  noise_riser_amount_.store(clamped, std::memory_order_release);
-  LOGI("SetNoiseRiserAmount: %.3f", clamped);
-}
-
-float Engine::NoiseRiserAmount() const {
-  return noise_riser_amount_.load(std::memory_order_acquire);
-}
-
-void Engine::SetTapeStopAmount(float amount) {
-  const float clamped = Clamp01(amount);
-  tape_stop_amount_.store(clamped, std::memory_order_release);
-  LOGI("SetTapeStopAmount: %.3f", clamped);
-}
-
-float Engine::TapeStopAmount() const {
-  return tape_stop_amount_.load(std::memory_order_acquire);
+float Engine::ReverbDamping() const {
+  return reverb_damping_.load(std::memory_order_acquire);
 }
 
 bool Engine::ArmRecording(int32_t track_id,

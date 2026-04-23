@@ -18,13 +18,6 @@ class FxScreen extends StatelessWidget {
             title: const Text('Mixer & FX'),
             actions: [
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: _HeaderActionButton(
-                  label: 'Reset Perf',
-                  onPressed: provider.resetPerformanceFx,
-                ),
-              ),
-              Padding(
                 padding: const EdgeInsets.fromLTRB(6, 8, 12, 8),
                 child: _HeaderActionButton(
                   label: 'Reset All',
@@ -47,79 +40,45 @@ class FxScreen extends StatelessWidget {
               _Section(
                 title: 'Send FX',
                 children: [
-                  _DivisionSelector(
-                    label: 'Delay Time',
-                    value: provider.fxDelayDivision,
-                    onChanged: provider.setFxDelayDivision,
+                  _SendFxBox(
+                    title: 'Delay',
+                    children: [
+                      _DivisionSelector(
+                        label: 'Delay Time',
+                        value: provider.fxDelayDivision,
+                        onChanged: provider.setFxDelayDivision,
+                      ),
+                      _DelayFeelSelector(
+                        value: provider.fxDelayFeel,
+                        onChanged: provider.setFxDelayFeel,
+                      ),
+                      _PercentSlider(
+                        label: 'Delay Tail',
+                        value: provider.fxDelayFeedback,
+                        onChanged: provider.setFxDelayFeedback,
+                      ),
+                      _PercentSlider(
+                        label: 'Delay Input',
+                        value: provider.fxDelayInput,
+                        onChanged: provider.setFxDelayInput,
+                      ),
+                    ],
                   ),
-                  _DelayFeelSelector(
-                    value: provider.fxDelayFeel,
-                    onChanged: provider.setFxDelayFeel,
-                  ),
-                  _PercentSlider(
-                    label: 'Delay Send',
-                    value: provider.fxDelaySend,
-                    onChanged: provider.setFxDelaySend,
-                  ),
-                  _PercentSlider(
-                    label: 'Reverb Send',
-                    value: provider.fxReverbSend,
-                    onChanged: provider.setFxReverbSend,
-                  ),
-                  _PercentSlider(
-                    label: 'Reverb Room Size',
-                    value: provider.fxReverbRoomSize,
-                    onChanged: provider.setFxReverbRoomSize,
-                  ),
-                ],
-              ),
-              _Section(
-                title: 'Performance FX',
-                children: [
-                  _SignedPercentSlider(
-                    label: 'DJ Filter',
-                    value: provider.fxDjFilterAmount,
-                    onChanged: provider.setFxDjFilterAmount,
-                  ),
-                  _PercentSlider(
-                    label: 'Filter Resonance',
-                    value: provider.fxDjFilterResonance,
-                    onChanged: provider.setFxDjFilterResonance,
-                  ),
-                  _PercentSlider(
-                    label: 'Beat Repeat',
-                    value: provider.fxBeatRepeatMix,
-                    onChanged: provider.setFxBeatRepeatMix,
-                  ),
-                  _DivisionSelector(
-                    label: 'Repeat Size',
-                    value: provider.fxBeatRepeatDivision,
-                    onChanged: provider.setFxBeatRepeatDivision,
-                  ),
-                  _PercentSlider(
-                    label: 'Trans Gate',
-                    value: provider.fxTransGateAmount,
-                    onChanged: provider.setFxTransGateAmount,
-                  ),
-                  _DivisionSelector(
-                    label: 'Gate Size',
-                    value: provider.fxTransGateDivision,
-                    onChanged: provider.setFxTransGateDivision,
-                  ),
-                  _PercentSlider(
-                    label: 'Noise Riser',
-                    value: provider.fxNoiseRiserAmount,
-                    onChanged: provider.setFxNoiseRiserAmount,
-                  ),
-                  _PercentSlider(
-                    label: 'Tape Stop',
-                    value: provider.fxTapeStopAmount,
-                    onChanged: provider.setFxTapeStopAmount,
-                  ),
-                  _PercentSlider(
-                    label: 'Distortion',
-                    value: provider.fxDistortionAmount,
-                    onChanged: provider.setFxDistortionAmount,
+                  const SizedBox(height: 10),
+                  _SendFxBox(
+                    title: 'Reverb',
+                    children: [
+                      _PercentSlider(
+                        label: 'Reverb Room Size',
+                        value: provider.fxReverbRoomSize,
+                        onChanged: provider.setFxReverbRoomSize,
+                      ),
+                      _PercentSlider(
+                        label: 'Reverb Damping',
+                        value: provider.fxReverbDamping,
+                        onChanged: provider.setFxReverbDamping,
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -198,8 +157,9 @@ class FxScreen extends StatelessWidget {
                             onChanged: (value) => unawaited(
                               provider.setTrackOutputGainDb(index, value),
                             ),
-                            onReset: () =>
-                                unawaited(provider.setTrackOutputGainDb(index, 0.0)),
+                            onReset: () => unawaited(
+                              provider.setTrackOutputGainDb(index, 0.0),
+                            ),
                           ),
                         ),
                       ),
@@ -230,10 +190,7 @@ class FxScreen extends StatelessWidget {
 }
 
 class _Section extends StatelessWidget {
-  const _Section({
-    required this.title,
-    required this.children,
-  });
+  const _Section({required this.title, required this.children});
 
   final String title;
   final List<Widget> children;
@@ -247,10 +204,7 @@ class _Section extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 10),
             ...children,
           ],
@@ -260,11 +214,38 @@ class _Section extends StatelessWidget {
   }
 }
 
+class _SendFxBox extends StatelessWidget {
+  const _SendFxBox({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Theme.of(context).dividerColor.withOpacity(0.75),
+          width: 1.0,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          ...children,
+        ],
+      ),
+    );
+  }
+}
+
 class _HeaderActionButton extends StatelessWidget {
-  const _HeaderActionButton({
-    required this.label,
-    required this.onPressed,
-  });
+  const _HeaderActionButton({required this.label, required this.onPressed});
 
   final String label;
   final VoidCallback onPressed;
@@ -301,12 +282,7 @@ class _PercentSlider extends StatelessWidget {
     return _SliderRow(
       label: label,
       valueText: '$pct%',
-      child: Slider(
-        value: value,
-        min: 0,
-        max: 1,
-        onChanged: onChanged,
-      ),
+      child: Slider(value: value, min: 0, max: 1, onChanged: onChanged),
     );
   }
 }
@@ -331,12 +307,7 @@ class _DbSlider extends StatelessWidget {
     return _SliderRow(
       label: label,
       valueText: '${value.toStringAsFixed(1)} dB',
-      child: Slider(
-        value: value,
-        min: min,
-        max: max,
-        onChanged: onChanged,
-      ),
+      child: Slider(value: value, min: min, max: max, onChanged: onChanged),
     );
   }
 }
@@ -384,40 +355,6 @@ class _HzSlider extends StatelessWidget {
   }
 }
 
-class _SignedPercentSlider extends StatelessWidget {
-  const _SignedPercentSlider({
-    required this.label,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final String label;
-  final double value;
-  final ValueChanged<double> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    String valueText;
-    if (value.abs() < 0.01) {
-      valueText = 'Center';
-    } else if (value < 0) {
-      valueText = 'LP ${(value.abs() * 100).round()}%';
-    } else {
-      valueText = 'HP ${(value.abs() * 100).round()}%';
-    }
-    return _SliderRow(
-      label: label,
-      valueText: valueText,
-      child: Slider(
-        value: value,
-        min: -1,
-        max: 1,
-        onChanged: onChanged,
-      ),
-    );
-  }
-}
-
 class _DivisionSelector extends StatelessWidget {
   const _DivisionSelector({
     required this.label,
@@ -460,10 +397,7 @@ class _DivisionSelector extends StatelessWidget {
 }
 
 class _DelayFeelSelector extends StatelessWidget {
-  const _DelayFeelSelector({
-    required this.value,
-    required this.onChanged,
-  });
+  const _DelayFeelSelector({required this.value, required this.onChanged});
 
   final int value;
   final ValueChanged<int> onChanged;
@@ -524,10 +458,7 @@ class _SliderRow extends StatelessWidget {
             children: [
               Text(label),
               const Spacer(),
-              Text(
-                valueText,
-                style: Theme.of(context).textTheme.labelMedium,
-              ),
+              Text(valueText, style: Theme.of(context).textTheme.labelMedium),
             ],
           ),
           child,
@@ -586,9 +517,7 @@ class _MasterVolumeSlider extends StatelessWidget {
                     child: IgnorePointer(
                       child: Container(
                         width: 1.4,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .primary
+                        color: Theme.of(context).colorScheme.primary
                             .withOpacity(nearUnity ? 0.95 : 0.55),
                       ),
                     ),
@@ -655,9 +584,7 @@ class _VerticalTrackGainStrip extends StatelessWidget {
                         child: IgnorePointer(
                           child: Container(
                             height: 1.2,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .primary
+                            color: Theme.of(context).colorScheme.primary
                                 .withOpacity(nearUnity ? 0.95 : 0.55),
                           ),
                         ),
@@ -674,9 +601,9 @@ class _VerticalTrackGainStrip extends StatelessWidget {
             Text(
               '0 dB',
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: Theme.of(context).dividerColor,
-                    fontSize: 10,
-                  ),
+                color: Theme.of(context).dividerColor,
+                fontSize: 10,
+              ),
             ),
           ],
         ),

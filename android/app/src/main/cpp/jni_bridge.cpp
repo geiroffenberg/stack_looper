@@ -106,17 +106,17 @@ Java_com_example_stack_1looper_StackLooperAudio_nativeTrackOutputGainDb(
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetTrackDelaySendEnabled(
-    JNIEnv* /*env*/, jclass /*clazz*/, jint track_id, jboolean enabled) {
-  stack_looper::GetGlobalEngine().SetTrackDelaySendEnabled(
-      static_cast<int32_t>(track_id), enabled == JNI_TRUE);
+Java_com_example_stack_1looper_StackLooperAudio_nativeSetTrackDelaySendLevel(
+    JNIEnv* /*env*/, jclass /*clazz*/, jint track_id, jfloat level) {
+  stack_looper::GetGlobalEngine().SetTrackDelaySendLevel(
+      static_cast<int32_t>(track_id), static_cast<float>(level));
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetTrackReverbSendEnabled(
-    JNIEnv* /*env*/, jclass /*clazz*/, jint track_id, jboolean enabled) {
-  stack_looper::GetGlobalEngine().SetTrackReverbSendEnabled(
-      static_cast<int32_t>(track_id), enabled == JNI_TRUE);
+Java_com_example_stack_1looper_StackLooperAudio_nativeSetTrackReverbSendLevel(
+    JNIEnv* /*env*/, jclass /*clazz*/, jint track_id, jfloat level) {
+  stack_looper::GetGlobalEngine().SetTrackReverbSendLevel(
+      static_cast<int32_t>(track_id), static_cast<float>(level));
 }
 
 JNIEXPORT void JNICALL
@@ -192,18 +192,6 @@ Java_com_example_stack_1looper_StackLooperAudio_nativeCompressorAmount(
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetDistortionAmount(
-    JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
-  stack_looper::GetGlobalEngine().SetDistortionAmount(static_cast<float>(amount));
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeDistortionAmount(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jfloat>(stack_looper::GetGlobalEngine().DistortionAmount());
-}
-
-JNIEXPORT void JNICALL
 Java_com_example_stack_1looper_StackLooperAudio_nativeSetSaturationAmount(
     JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
   stack_looper::GetGlobalEngine().SetSaturationAmount(static_cast<float>(amount));
@@ -213,18 +201,6 @@ JNIEXPORT jfloat JNICALL
 Java_com_example_stack_1looper_StackLooperAudio_nativeSaturationAmount(
     JNIEnv* /*env*/, jclass /*clazz*/) {
   return static_cast<jfloat>(stack_looper::GetGlobalEngine().SaturationAmount());
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetDelaySend(
-    JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
-  stack_looper::GetGlobalEngine().SetDelaySend(static_cast<float>(amount));
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeDelaySend(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jfloat>(stack_looper::GetGlobalEngine().DelaySend());
 }
 
 JNIEXPORT void JNICALL
@@ -252,15 +228,27 @@ Java_com_example_stack_1looper_StackLooperAudio_nativeDelayFeel(
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetReverbSend(
+Java_com_example_stack_1looper_StackLooperAudio_nativeSetDelayFeedback(
     JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
-  stack_looper::GetGlobalEngine().SetReverbSend(static_cast<float>(amount));
+  stack_looper::GetGlobalEngine().SetDelayFeedback(static_cast<float>(amount));
 }
 
 JNIEXPORT jfloat JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeReverbSend(
+Java_com_example_stack_1looper_StackLooperAudio_nativeDelayFeedback(
     JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jfloat>(stack_looper::GetGlobalEngine().ReverbSend());
+  return static_cast<jfloat>(stack_looper::GetGlobalEngine().DelayFeedback());
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeSetDelayInput(
+    JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
+  stack_looper::GetGlobalEngine().SetDelayInput(static_cast<float>(amount));
+}
+
+JNIEXPORT jfloat JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeDelayInput(
+    JNIEnv* /*env*/, jclass /*clazz*/) {
+  return static_cast<jfloat>(stack_looper::GetGlobalEngine().DelayInput());
 }
 
 JNIEXPORT void JNICALL
@@ -276,99 +264,15 @@ Java_com_example_stack_1looper_StackLooperAudio_nativeReverbRoomSize(
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetDjFilterAmount(
+Java_com_example_stack_1looper_StackLooperAudio_nativeSetReverbDamping(
     JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
-  stack_looper::GetGlobalEngine().SetDjFilterAmount(static_cast<float>(amount));
+  stack_looper::GetGlobalEngine().SetReverbDamping(static_cast<float>(amount));
 }
 
 JNIEXPORT jfloat JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeDjFilterAmount(
+Java_com_example_stack_1looper_StackLooperAudio_nativeReverbDamping(
     JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jfloat>(stack_looper::GetGlobalEngine().DjFilterAmount());
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetDjFilterResonance(
-    JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
-  stack_looper::GetGlobalEngine().SetDjFilterResonance(static_cast<float>(amount));
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeDjFilterResonance(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jfloat>(stack_looper::GetGlobalEngine().DjFilterResonance());
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetBeatRepeatMix(
-    JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
-  stack_looper::GetGlobalEngine().SetBeatRepeatMix(static_cast<float>(amount));
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeBeatRepeatMix(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jfloat>(stack_looper::GetGlobalEngine().BeatRepeatMix());
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetBeatRepeatDivision(
-    JNIEnv* /*env*/, jclass /*clazz*/, jint division) {
-  stack_looper::GetGlobalEngine().SetBeatRepeatDivision(static_cast<int32_t>(division));
-}
-
-JNIEXPORT jint JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeBeatRepeatDivision(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jint>(stack_looper::GetGlobalEngine().BeatRepeatDivision());
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetTransGateAmount(
-    JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
-  stack_looper::GetGlobalEngine().SetTransGateAmount(static_cast<float>(amount));
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeTransGateAmount(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jfloat>(stack_looper::GetGlobalEngine().TransGateAmount());
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetTransGateDivision(
-    JNIEnv* /*env*/, jclass /*clazz*/, jint division) {
-  stack_looper::GetGlobalEngine().SetTransGateDivision(static_cast<int32_t>(division));
-}
-
-JNIEXPORT jint JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeTransGateDivision(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jint>(stack_looper::GetGlobalEngine().TransGateDivision());
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetNoiseRiserAmount(
-    JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
-  stack_looper::GetGlobalEngine().SetNoiseRiserAmount(static_cast<float>(amount));
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeNoiseRiserAmount(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jfloat>(stack_looper::GetGlobalEngine().NoiseRiserAmount());
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeSetTapeStopAmount(
-    JNIEnv* /*env*/, jclass /*clazz*/, jfloat amount) {
-  stack_looper::GetGlobalEngine().SetTapeStopAmount(static_cast<float>(amount));
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_example_stack_1looper_StackLooperAudio_nativeTapeStopAmount(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
-  return static_cast<jfloat>(stack_looper::GetGlobalEngine().TapeStopAmount());
+  return static_cast<jfloat>(stack_looper::GetGlobalEngine().ReverbDamping());
 }
 
 JNIEXPORT jlong JNICALL

@@ -118,10 +118,10 @@ class Engine : public oboe::AudioStreamDataCallback,
   float LimiterCeilingDb() const;
   void SetTrackOutputGainDb(int32_t track_id, float db);
   float TrackOutputGainDb(int32_t track_id) const;
-  void SetTrackDelaySendEnabled(int32_t track_id, bool enabled);
-  bool TrackDelaySendEnabled(int32_t track_id) const;
-  void SetTrackReverbSendEnabled(int32_t track_id, bool enabled);
-  bool TrackReverbSendEnabled(int32_t track_id) const;
+  void SetTrackDelaySendLevel(int32_t track_id, float level);
+  float TrackDelaySendLevel(int32_t track_id) const;
+  void SetTrackReverbSendLevel(int32_t track_id, float level);
+  float TrackReverbSendLevel(int32_t track_id) const;
   void SetHighPassHz(float hz);
   float HighPassHz() const;
   void SetLowPassHz(float hz);
@@ -134,36 +134,20 @@ class Engine : public oboe::AudioStreamDataCallback,
   float EqHighDb() const;
   void SetCompressorAmount(float amount);
   float CompressorAmount() const;
-  void SetDistortionAmount(float amount);
-  float DistortionAmount() const;
   void SetSaturationAmount(float amount);
   float SaturationAmount() const;
-  void SetDelaySend(float amount);
-  float DelaySend() const;
   void SetDelayDivision(int32_t division);
   int32_t DelayDivision() const;
   void SetDelayFeel(int32_t feel);
   int32_t DelayFeel() const;
-  void SetReverbSend(float amount);
-  float ReverbSend() const;
+  void SetDelayFeedback(float amount);
+  float DelayFeedback() const;
+  void SetDelayInput(float amount);
+  float DelayInput() const;
   void SetReverbRoomSize(float amount);
   float ReverbRoomSize() const;
-  void SetDjFilterAmount(float amount);
-  float DjFilterAmount() const;
-  void SetDjFilterResonance(float amount);
-  float DjFilterResonance() const;
-  void SetBeatRepeatMix(float amount);
-  float BeatRepeatMix() const;
-  void SetBeatRepeatDivision(int32_t division);
-  int32_t BeatRepeatDivision() const;
-  void SetTransGateAmount(float amount);
-  float TransGateAmount() const;
-  void SetTransGateDivision(int32_t division);
-  int32_t TransGateDivision() const;
-  void SetNoiseRiserAmount(float amount);
-  float NoiseRiserAmount() const;
-  void SetTapeStopAmount(float amount);
-  float TapeStopAmount() const;
+  void SetReverbDamping(float amount);
+  float ReverbDamping() const;
 
   // Transport position (master sample clock). Useful for Dart to schedule
   // recording "N beats from now" without guessing.
@@ -279,8 +263,8 @@ class Engine : public oboe::AudioStreamDataCallback,
   // Per-track output gains (target + smoothed) for mixer-style volume strips.
   std::array<std::atomic<float>, kMaxTracks> track_output_gain_target_{};
   std::array<float, kMaxTracks> track_output_gain_smoothed_{};
-  std::array<std::atomic<bool>, kMaxTracks> track_delay_send_enabled_{};
-  std::array<std::atomic<bool>, kMaxTracks> track_reverb_send_enabled_{};
+  std::array<std::atomic<float>, kMaxTracks> track_delay_send_level_{};
+  std::array<std::atomic<float>, kMaxTracks> track_reverb_send_level_{};
   // Master limiter ceiling in linear gain. Default is -1.0 dBFS.
   std::atomic<float> limiter_ceiling_linear_{0.89125094f};
   // Master filter/EQ targets (UI thread writes, audio thread reads).
@@ -290,21 +274,13 @@ class Engine : public oboe::AudioStreamDataCallback,
   std::atomic<float> eq_mid_db_{0.0f};
   std::atomic<float> eq_high_db_{0.0f};
   std::atomic<float> compressor_amount_{0.0f};
-  std::atomic<float> distortion_amount_{0.0f};
   std::atomic<float> saturation_amount_{0.0f};
-  std::atomic<float> delay_send_{0.0f};
   std::atomic<int32_t> delay_division_{8};
   std::atomic<int32_t> delay_feel_{0};
-  std::atomic<float> reverb_send_{0.0f};
-  std::atomic<float> reverb_room_size_{0.55f};
-  std::atomic<float> dj_filter_amount_{0.0f};
-  std::atomic<float> dj_filter_resonance_{0.0f};
-  std::atomic<float> beat_repeat_mix_{0.0f};
-  std::atomic<int32_t> beat_repeat_division_{8};
-  std::atomic<float> trans_gate_amount_{0.0f};
-  std::atomic<int32_t> trans_gate_division_{8};
-  std::atomic<float> noise_riser_amount_{0.0f};
-  std::atomic<float> tape_stop_amount_{0.0f};
+  std::atomic<float> delay_feedback_{0.4f};
+  std::atomic<float> delay_input_{0.85f};
+  std::atomic<float> reverb_room_size_{0.5f};
+  std::atomic<float> reverb_damping_{0.55f};
   // Audio-thread biquad state for master HP/LP and 3-band EQ.
   std::array<float, 5> biquad_b0_{1, 1, 1, 1, 1};
   std::array<float, 5> biquad_b1_{0, 0, 0, 0, 0};
@@ -313,13 +289,6 @@ class Engine : public oboe::AudioStreamDataCallback,
   std::array<float, 5> biquad_a2_{0, 0, 0, 0, 0};
   std::array<float, 5> biquad_z1_{0, 0, 0, 0, 0};
   std::array<float, 5> biquad_z2_{0, 0, 0, 0, 0};
-  float dj_filter_b0_ = 1.0f;
-  float dj_filter_b1_ = 0.0f;
-  float dj_filter_b2_ = 0.0f;
-  float dj_filter_a1_ = 0.0f;
-  float dj_filter_a2_ = 0.0f;
-  float dj_filter_z1_ = 0.0f;
-  float dj_filter_z2_ = 0.0f;
   float compressor_env_ = 0.0f;
   float compressor_gain_ = 1.0f;
   std::vector<float> delay_buffer_;
@@ -329,20 +298,6 @@ class Engine : public oboe::AudioStreamDataCallback,
   std::array<std::vector<float>, 3> reverb_buffers_;
   std::array<int32_t, 3> reverb_write_pos_{0, 0, 0};
   float reverb_lowpass_state_ = 0.0f;
-  std::vector<float> perf_history_buffer_;
-  int32_t perf_history_write_pos_ = 0;
-  bool beat_repeat_active_ = false;
-  int32_t beat_repeat_capture_start_ = 0;
-  int32_t beat_repeat_capture_length_ = 0;
-  int32_t beat_repeat_last_division_ = 8;
-  int32_t beat_repeat_play_pos_ = 0;
-  uint32_t noise_state_ = 0x12345678u;
-  float noise_lowpass_state_ = 0.0f;
-  std::vector<float> tape_stop_buffer_;
-  int32_t tape_stop_write_pos_ = 0;
-  bool tape_stop_active_ = false;
-  float tape_stop_read_pos_ = 0.0f;
-  float tape_stop_lowpass_state_ = 0.0f;
 
   // ---- Recording / mic routing --------------------------------------------
   // Pre-allocated tracks. Buffers are sized on first Start() when we know the

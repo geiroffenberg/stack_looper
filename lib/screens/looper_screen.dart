@@ -77,10 +77,10 @@ class _LooperScreenState extends State<LooperScreen>
                       builder: (context, _) {
                         final double globalPlayheadProgress =
                             (state.transportState == TransportState.playing ||
-                                    state.transportState ==
-                                        TransportState.recording)
-                                ? _playheadController.value
-                                : 0;
+                                state.transportState ==
+                                    TransportState.recording)
+                            ? _playheadController.value
+                            : 0;
 
                         return ListView.builder(
                           itemCount: state.tracks.length,
@@ -91,27 +91,36 @@ class _LooperScreenState extends State<LooperScreen>
                                 provider.armedTrackId == track.id;
                             final double trackPlayheadProgress =
                                 _trackPlayheadProgress(
-                              globalProgress: globalPlayheadProgress,
-                              visualBarDividers: visualBarDividers,
-                              trackBarLength: track.barLength,
-                            );
+                                  globalProgress: globalPlayheadProgress,
+                                  visualBarDividers: visualBarDividers,
+                                  trackBarLength: track.barLength,
+                                );
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 10),
                               child: TrackCard(
                                 track: track,
-                                isSelected: !track.hasAudio && state.selectedTrackIndex == index,
+                                isSelected:
+                                    !track.hasAudio &&
+                                    state.selectedTrackIndex == index,
                                 visualBarDividers: visualBarDividers,
-                                playheadProgress: isArmedTrack ? 0 : trackPlayheadProgress,
+                                playheadProgress: isArmedTrack
+                                    ? 0
+                                    : trackPlayheadProgress,
                                 isArmed: isArmedTrack,
                                 armedBlinkOn: provider.armedBlinkOn,
-                                onDelete: () => provider.deleteTrackAudio(index),
+                                onDelete: () =>
+                                    provider.deleteTrackAudio(index),
                                 onToggleDelaySend: () =>
-                                  provider.toggleTrackDelaySend(index),
+                                    provider.toggleTrackDelaySend(index),
                                 onToggleReverbSend: () =>
-                                  provider.toggleTrackReverbSend(index),
+                                    provider.toggleTrackReverbSend(index),
+                                onDelaySendLevelChanged: (level) => provider
+                                    .setTrackDelaySendLevel(index, level),
+                                onReverbSendLevelChanged: (level) => provider
+                                    .setTrackReverbSendLevel(index, level),
                                 onToggleMute: () => provider.toggleMute(index),
-                                onBarLengthChanged: (barLength) =>
-                                    provider.setTrackBarLength(index, barLength),
+                                onBarLengthChanged: (barLength) => provider
+                                    .setTrackBarLength(index, barLength),
                               ),
                             );
                           },
@@ -157,10 +166,12 @@ class _LooperScreenState extends State<LooperScreen>
     required int visualBarDividers,
   }) {
     // Only animate the playhead when actually playing or recording, not during count-in
-    final bool isPlaying = state.transportState == TransportState.playing ||
+    final bool isPlaying =
+        state.transportState == TransportState.playing ||
         state.transportState == TransportState.recording;
     final bool changedTransport = _lastTransportState != state.transportState;
-    final bool changedTempo = _lastBpm != bpm || _lastVisualDividers != visualBarDividers;
+    final bool changedTempo =
+        _lastBpm != bpm || _lastVisualDividers != visualBarDividers;
 
     _lastTransportState = state.transportState;
     _lastBpm = bpm;

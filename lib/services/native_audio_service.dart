@@ -17,7 +17,7 @@ import '../constants/app_constants.dart';
 /// drive timing instead of Dart timers.
 class NativeAudioService extends AudioService {
   NativeAudioService({NativeAudioEngine? engine})
-      : _engine = engine ?? NativeAudioEngine();
+    : _engine = engine ?? NativeAudioEngine();
 
   final NativeAudioEngine _engine;
 
@@ -62,61 +62,46 @@ class NativeAudioService extends AudioService {
   Future<void> setMetronomeAudible(bool audible) =>
       _engine.setMetronomeAudible(audible);
 
-    Future<void> setMasterOutputGainDb(double db) =>
+  Future<void> setMasterOutputGainDb(double db) =>
       _engine.setMasterOutputGainDb(db);
 
-    Future<void> setLimiterCeilingDb(double db) =>
-        _engine.setLimiterCeilingDb(db);
+  Future<void> setLimiterCeilingDb(double db) =>
+      _engine.setLimiterCeilingDb(db);
 
-    Future<void> setHighPassHz(double hz) => _engine.setHighPassHz(hz);
-    Future<void> setLowPassHz(double hz) => _engine.setLowPassHz(hz);
-    Future<void> setEqLowDb(double db) => _engine.setEqLowDb(db);
-    Future<void> setEqMidDb(double db) => _engine.setEqMidDb(db);
-    Future<void> setEqHighDb(double db) => _engine.setEqHighDb(db);
-    Future<void> setCompressorAmount(double amount) =>
+  Future<void> setHighPassHz(double hz) => _engine.setHighPassHz(hz);
+  Future<void> setLowPassHz(double hz) => _engine.setLowPassHz(hz);
+  Future<void> setEqLowDb(double db) => _engine.setEqLowDb(db);
+  Future<void> setEqMidDb(double db) => _engine.setEqMidDb(db);
+  Future<void> setEqHighDb(double db) => _engine.setEqHighDb(db);
+  Future<void> setCompressorAmount(double amount) =>
       _engine.setCompressorAmount(amount);
-    Future<void> setDistortionAmount(double amount) =>
-      _engine.setDistortionAmount(amount);
-    Future<void> setSaturationAmount(double amount) =>
+  Future<void> setSaturationAmount(double amount) =>
       _engine.setSaturationAmount(amount);
-    Future<void> setDelaySend(double amount) => _engine.setDelaySend(amount);
-    Future<void> setDelayDivision(int division) =>
+  Future<void> setDelayDivision(int division) =>
       _engine.setDelayDivision(division);
-    Future<void> setDelayFeel(int feel) => _engine.setDelayFeel(feel);
-    Future<void> setReverbSend(double amount) => _engine.setReverbSend(amount);
-    Future<void> setReverbRoomSize(double amount) =>
+  Future<void> setDelayFeel(int feel) => _engine.setDelayFeel(feel);
+  Future<void> setDelayFeedback(double amount) =>
+      _engine.setDelayFeedback(amount);
+  Future<void> setDelayInput(double amount) => _engine.setDelayInput(amount);
+  Future<void> setReverbRoomSize(double amount) =>
       _engine.setReverbRoomSize(amount);
-    Future<void> setDjFilterAmount(double amount) =>
-      _engine.setDjFilterAmount(amount);
-    Future<void> setDjFilterResonance(double amount) =>
-      _engine.setDjFilterResonance(amount);
-    Future<void> setBeatRepeatMix(double amount) =>
-      _engine.setBeatRepeatMix(amount);
-    Future<void> setBeatRepeatDivision(int division) =>
-      _engine.setBeatRepeatDivision(division);
-    Future<void> setTransGateAmount(double amount) =>
-      _engine.setTransGateAmount(amount);
-    Future<void> setTransGateDivision(int division) =>
-      _engine.setTransGateDivision(division);
-    Future<void> setNoiseRiserAmount(double amount) =>
-      _engine.setNoiseRiserAmount(amount);
-    Future<void> setTapeStopAmount(double amount) =>
-      _engine.setTapeStopAmount(amount);
+  Future<void> setReverbDamping(double amount) =>
+      _engine.setReverbDamping(amount);
 
-    Future<void> setTrackOutputGainDb({
-      required int trackId,
-      required double db,
-    }) => _engine.setTrackOutputGainDb(trackId: trackId, db: db);
+  Future<void> setTrackOutputGainDb({
+    required int trackId,
+    required double db,
+  }) => _engine.setTrackOutputGainDb(trackId: trackId, db: db);
 
-    Future<void> setTrackDelaySendEnabled({
-      required int trackId,
-      required bool enabled,
-    }) => _engine.setTrackDelaySendEnabled(trackId: trackId, enabled: enabled);
+  Future<void> setTrackDelaySendLevel({
+    required int trackId,
+    required double level,
+  }) => _engine.setTrackDelaySendLevel(trackId: trackId, level: level);
 
-    Future<void> setTrackReverbSendEnabled({
-      required int trackId,
-      required bool enabled,
-    }) => _engine.setTrackReverbSendEnabled(trackId: trackId, enabled: enabled);
+  Future<void> setTrackReverbSendLevel({
+    required int trackId,
+    required double level,
+  }) => _engine.setTrackReverbSendLevel(trackId: trackId, level: level);
 
   Future<List<double>> trackWaveformPeaks({
     required int trackId,
@@ -177,7 +162,7 @@ class NativeAudioService extends AudioService {
     if (_hasRecording.contains(trackId)) return true;
     // Otherwise ask native (e.g. after hot-reload in dev).
     final state = await _engine.trackState(trackId);
-    return state == 3;  // kRecorded
+    return state == 3; // kRecorded
   }
 
   @override

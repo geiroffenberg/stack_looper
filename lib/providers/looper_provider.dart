@@ -11,23 +11,22 @@ import '../services/native_audio_service.dart';
 class LooperProvider extends ChangeNotifier {
   static const int _waveformBucketsPerBar = 32;
   static const int _beatsPerBar = 4;
+  static const double _defaultTrackDelaySendLevel = 1.0;
+  static const double _defaultTrackReverbSendLevel = 1.0;
 
   LooperProvider({AudioService? audioService})
-      : _audioService = audioService ?? AudioServiceStub(),
-        _state = LooperState(
-          tracks: List.generate(
-            AppConstants.maxTracks,
-            (index) => Track(
-              id: index,
-              barLength: AppConstants.defaultBarLength,
-            ),
-          ),
-          selectedTrackIndex: 0,
-          bpm: AppConstants.defaultBpm,
-          repeatCount: AppConstants.defaultRepeatCount,
-          numTracksToRecord: 1,
-          transportState: TransportState.stopped,
-        );
+    : _audioService = audioService ?? AudioServiceStub(),
+      _state = LooperState(
+        tracks: List.generate(
+          AppConstants.maxTracks,
+          (index) => Track(id: index, barLength: AppConstants.defaultBarLength),
+        ),
+        selectedTrackIndex: 0,
+        bpm: AppConstants.defaultBpm,
+        repeatCount: AppConstants.defaultRepeatCount,
+        numTracksToRecord: 1,
+        transportState: TransportState.stopped,
+      );
 
   final AudioService _audioService;
 
@@ -59,33 +58,28 @@ class LooperProvider extends ChangeNotifier {
   double _fxEqMidDb = 0.0;
   double _fxEqHighDb = 0.0;
   double _fxCompressorAmount = 0.0;
-  double _fxDistortionAmount = 0.0;
   double _fxSaturationAmount = 0.0;
-  double _fxDelaySend = 0.0;
   int _fxDelayDivision = 8;
   int _fxDelayFeel = 0;
-  double _fxReverbSend = 0.0;
-  double _fxReverbRoomSize = 0.55;
-  double _fxDjFilterAmount = 0.0;
-  double _fxDjFilterResonance = 0.0;
-  double _fxBeatRepeatMix = 0.0;
-  int _fxBeatRepeatDivision = 8;
-  double _fxTransGateAmount = 0.0;
-  int _fxTransGateDivision = 8;
-  double _fxNoiseRiserAmount = 0.0;
-  double _fxTapeStopAmount = 0.0;
+  double _fxDelayFeedback = 0.4;
+  double _fxDelayInput = 0.85;
+  double _fxReverbRoomSize = 0.5;
+  double _fxReverbDamping = 0.55;
   double _fxLimiterCeilingDb = -1.0;
   double _fxMasterOutputDb = 0.0;
-  late final List<double> _fxTrackOutputDb =
-      List<double>.filled(AppConstants.maxTracks, 0.0, growable: false);
+  late final List<double> _fxTrackOutputDb = List<double>.filled(
+    AppConstants.maxTracks,
+    0.0,
+    growable: false,
+  );
 
   // Native beat plumbing. _beatSub listens for the whole lifetime of the
   // transport (count-in → recording). _countInBaseBeat anchors local beat 1
   // to whatever the first native beat event is, so this code doesn't care
   // about the monotonic native beat index.
   StreamSubscription<int>? _beatSub;
-  int _localBeat = 0;      // 1-based beat counter within the current session
-  int? _countInBaseBeat;   // native beat index that corresponds to local=1
+  int _localBeat = 0; // 1-based beat counter within the current session
+  int? _countInBaseBeat; // native beat index that corresponds to local=1
   List<int> _pendingTargets = const [];
 
   // Chain-record state. When numTracksToRecord > 1, we fill empty tracks
@@ -93,9 +87,9 @@ class LooperProvider extends ChangeNotifier {
   // track is armed with its own start_frame/length on the native side and
   // the engine hands off seamlessly between them. Dart tracks which target
   // is "currently recording" for UI purposes.
-  List<int> _chainTargets = const [];     // ordered track IDs to fill
-  List<int> _chainStartBeats = const [];  // local beat each target begins at
-  int _chainCurrentIdx = 0;               // index into _chainTargets
+  List<int> _chainTargets = const []; // ordered track IDs to fill
+  List<int> _chainStartBeats = const []; // local beat each target begins at
+  int _chainCurrentIdx = 0; // index into _chainTargets
 
   LooperState get state => _state;
 
@@ -111,24 +105,17 @@ class LooperProvider extends ChangeNotifier {
   double get fxEqMidDb => _fxEqMidDb;
   double get fxEqHighDb => _fxEqHighDb;
   double get fxCompressorAmount => _fxCompressorAmount;
-  double get fxDistortionAmount => _fxDistortionAmount;
   double get fxSaturationAmount => _fxSaturationAmount;
-  double get fxDelaySend => _fxDelaySend;
   int get fxDelayDivision => _fxDelayDivision;
   int get fxDelayFeel => _fxDelayFeel;
-  double get fxReverbSend => _fxReverbSend;
+  double get fxDelayFeedback => _fxDelayFeedback;
+  double get fxDelayInput => _fxDelayInput;
   double get fxReverbRoomSize => _fxReverbRoomSize;
-  double get fxDjFilterAmount => _fxDjFilterAmount;
-  double get fxDjFilterResonance => _fxDjFilterResonance;
-  double get fxBeatRepeatMix => _fxBeatRepeatMix;
-  int get fxBeatRepeatDivision => _fxBeatRepeatDivision;
-  double get fxTransGateAmount => _fxTransGateAmount;
-  int get fxTransGateDivision => _fxTransGateDivision;
-  double get fxNoiseRiserAmount => _fxNoiseRiserAmount;
-  double get fxTapeStopAmount => _fxTapeStopAmount;
+  double get fxReverbDamping => _fxReverbDamping;
   double get fxLimiterCeilingDb => _fxLimiterCeilingDb;
   double get fxMasterOutputDb => _fxMasterOutputDb;
-  List<double> get fxTrackOutputDb => List<double>.unmodifiable(_fxTrackOutputDb);
+  List<double> get fxTrackOutputDb =>
+      List<double>.unmodifiable(_fxTrackOutputDb);
 
   int get visualBarDividers =>
       _state.tracks.any((track) => track.barLength == 8) ? 8 : 4;
@@ -196,10 +183,18 @@ class LooperProvider extends ChangeNotifier {
     if (trackId < 0 || trackId >= _state.tracks.length) return;
     final Track track = _state.tracks[trackId];
     final bool enabled = !track.delaySendEnabled;
-    _updateTrack(trackId, (t) => t.copyWith(delaySendEnabled: enabled));
+    final double level = enabled
+        ? (track.delaySendLevel > 0.001
+              ? track.delaySendLevel
+              : _defaultTrackDelaySendLevel)
+        : 0.0;
+    _updateTrack(
+      trackId,
+      (t) => t.copyWith(delaySendEnabled: enabled, delaySendLevel: level),
+    );
     final native = _native;
     if (native != null) {
-      unawaited(native.setTrackDelaySendEnabled(trackId: trackId, enabled: enabled));
+      unawaited(native.setTrackDelaySendLevel(trackId: trackId, level: level));
     }
   }
 
@@ -207,10 +202,54 @@ class LooperProvider extends ChangeNotifier {
     if (trackId < 0 || trackId >= _state.tracks.length) return;
     final Track track = _state.tracks[trackId];
     final bool enabled = !track.reverbSendEnabled;
-    _updateTrack(trackId, (t) => t.copyWith(reverbSendEnabled: enabled));
+    final double level = enabled
+        ? (track.reverbSendLevel > 0.001
+              ? track.reverbSendLevel
+              : _defaultTrackReverbSendLevel)
+        : 0.0;
+    _updateTrack(
+      trackId,
+      (t) => t.copyWith(reverbSendEnabled: enabled, reverbSendLevel: level),
+    );
     final native = _native;
     if (native != null) {
-      unawaited(native.setTrackReverbSendEnabled(trackId: trackId, enabled: enabled));
+      unawaited(native.setTrackReverbSendLevel(trackId: trackId, level: level));
+    }
+  }
+
+  void setTrackDelaySendLevel(int trackId, double value) {
+    if (trackId < 0 || trackId >= _state.tracks.length) return;
+    final double clamped = value.clamp(0.0, 1.0);
+    _updateTrack(
+      trackId,
+      (t) => t.copyWith(
+        delaySendLevel: clamped,
+        delaySendEnabled: clamped > 0.001,
+      ),
+    );
+    final native = _native;
+    if (native != null) {
+      unawaited(
+        native.setTrackDelaySendLevel(trackId: trackId, level: clamped),
+      );
+    }
+  }
+
+  void setTrackReverbSendLevel(int trackId, double value) {
+    if (trackId < 0 || trackId >= _state.tracks.length) return;
+    final double clamped = value.clamp(0.0, 1.0);
+    _updateTrack(
+      trackId,
+      (t) => t.copyWith(
+        reverbSendLevel: clamped,
+        reverbSendEnabled: clamped > 0.001,
+      ),
+    );
+    final native = _native;
+    if (native != null) {
+      unawaited(
+        native.setTrackReverbSendLevel(trackId: trackId, level: clamped),
+      );
     }
   }
 
@@ -274,22 +313,10 @@ class LooperProvider extends ChangeNotifier {
     unawaited(_applyCompressorAmount());
   }
 
-  void setFxDistortionAmount(double value) {
-    _fxDistortionAmount = value.clamp(0.0, 1.0);
-    notifyListeners();
-    unawaited(_applyDistortionAmount());
-  }
-
   void setFxSaturationAmount(double value) {
     _fxSaturationAmount = value.clamp(0.0, 1.0);
     notifyListeners();
     unawaited(_applySaturationAmount());
-  }
-
-  void setFxDelaySend(double value) {
-    _fxDelaySend = value.clamp(0.0, 1.0);
-    notifyListeners();
-    unawaited(_applyDelaySend());
   }
 
   void setFxDelayDivision(int value) {
@@ -306,10 +333,16 @@ class LooperProvider extends ChangeNotifier {
     unawaited(_applyDelayFeel());
   }
 
-  void setFxReverbSend(double value) {
-    _fxReverbSend = value.clamp(0.0, 1.0);
+  void setFxDelayFeedback(double value) {
+    _fxDelayFeedback = value.clamp(0.0, 0.95);
     notifyListeners();
-    unawaited(_applyReverbSend());
+    unawaited(_applyDelayFeedback());
+  }
+
+  void setFxDelayInput(double value) {
+    _fxDelayInput = value.clamp(0.0, 1.0);
+    notifyListeners();
+    unawaited(_applyDelayInput());
   }
 
   void setFxReverbRoomSize(double value) {
@@ -318,54 +351,10 @@ class LooperProvider extends ChangeNotifier {
     unawaited(_applyReverbRoomSize());
   }
 
-  void setFxDjFilterAmount(double value) {
-    _fxDjFilterAmount = value.clamp(-1.0, 1.0);
+  void setFxReverbDamping(double value) {
+    _fxReverbDamping = value.clamp(0.0, 1.0);
     notifyListeners();
-    unawaited(_applyDjFilterAmount());
-  }
-
-  void setFxDjFilterResonance(double value) {
-    _fxDjFilterResonance = value.clamp(0.0, 1.0);
-    notifyListeners();
-    unawaited(_applyDjFilterResonance());
-  }
-
-  void setFxBeatRepeatMix(double value) {
-    _fxBeatRepeatMix = value.clamp(0.0, 1.0);
-    notifyListeners();
-    unawaited(_applyBeatRepeatMix());
-  }
-
-  void setFxBeatRepeatDivision(int value) {
-    const List<int> allowed = <int>[2, 4, 8, 16];
-    _fxBeatRepeatDivision = allowed.contains(value) ? value : 8;
-    notifyListeners();
-    unawaited(_applyBeatRepeatDivision());
-  }
-
-  void setFxTransGateAmount(double value) {
-    _fxTransGateAmount = value.clamp(0.0, 1.0);
-    notifyListeners();
-    unawaited(_applyTransGateAmount());
-  }
-
-  void setFxTransGateDivision(int value) {
-    const List<int> allowed = <int>[2, 4, 8, 16];
-    _fxTransGateDivision = allowed.contains(value) ? value : 8;
-    notifyListeners();
-    unawaited(_applyTransGateDivision());
-  }
-
-  void setFxNoiseRiserAmount(double value) {
-    _fxNoiseRiserAmount = value.clamp(0.0, 1.0);
-    notifyListeners();
-    unawaited(_applyNoiseRiserAmount());
-  }
-
-  void setFxTapeStopAmount(double value) {
-    _fxTapeStopAmount = value.clamp(0.0, 1.0);
-    notifyListeners();
-    unawaited(_applyTapeStopAmount());
+    unawaited(_applyReverbDamping());
   }
 
   Future<void> setFxLimiterCeilingDb(double value) async {
@@ -392,28 +381,6 @@ class LooperProvider extends ChangeNotifier {
     await native.setTrackOutputGainDb(trackId: trackId, db: clamped);
   }
 
-  void resetPerformanceFx() {
-    _fxDistortionAmount = 0.0;
-    _fxDjFilterAmount = 0.0;
-    _fxDjFilterResonance = 0.0;
-    _fxBeatRepeatMix = 0.0;
-    _fxBeatRepeatDivision = 8;
-    _fxTransGateAmount = 0.0;
-    _fxTransGateDivision = 8;
-    _fxNoiseRiserAmount = 0.0;
-    _fxTapeStopAmount = 0.0;
-    notifyListeners();
-    unawaited(_applyDistortionAmount());
-    unawaited(_applyDjFilterAmount());
-    unawaited(_applyDjFilterResonance());
-    unawaited(_applyBeatRepeatMix());
-    unawaited(_applyBeatRepeatDivision());
-    unawaited(_applyTransGateAmount());
-    unawaited(_applyTransGateDivision());
-    unawaited(_applyNoiseRiserAmount());
-    unawaited(_applyTapeStopAmount());
-  }
-
   Future<void> resetAllFx() async {
     _fxEnabled = true;
     _fxHighPassHz = 20.0;
@@ -422,21 +389,13 @@ class LooperProvider extends ChangeNotifier {
     _fxEqMidDb = 0.0;
     _fxEqHighDb = 0.0;
     _fxCompressorAmount = 0.0;
-    _fxDistortionAmount = 0.0;
     _fxSaturationAmount = 0.0;
-    _fxDelaySend = 0.0;
     _fxDelayDivision = 8;
     _fxDelayFeel = 0;
-    _fxReverbSend = 0.0;
-    _fxReverbRoomSize = 0.55;
-    _fxDjFilterAmount = 0.0;
-    _fxDjFilterResonance = 0.0;
-    _fxBeatRepeatMix = 0.0;
-    _fxBeatRepeatDivision = 8;
-    _fxTransGateAmount = 0.0;
-    _fxTransGateDivision = 8;
-    _fxNoiseRiserAmount = 0.0;
-    _fxTapeStopAmount = 0.0;
+    _fxDelayFeedback = 0.4;
+    _fxDelayInput = 0.85;
+    _fxReverbRoomSize = 0.5;
+    _fxReverbDamping = 0.55;
     _fxLimiterCeilingDb = -1.0;
     _fxMasterOutputDb = 0.0;
     for (int i = 0; i < _fxTrackOutputDb.length; i++) {
@@ -451,21 +410,13 @@ class LooperProvider extends ChangeNotifier {
     await _applyEqMid();
     await _applyEqHigh();
     await _applyCompressorAmount();
-    await _applyDistortionAmount();
     await _applySaturationAmount();
-    await _applyDelaySend();
     await _applyDelayDivision();
     await _applyDelayFeel();
-    await _applyReverbSend();
+    await _applyDelayFeedback();
+    await _applyDelayInput();
     await _applyReverbRoomSize();
-    await _applyDjFilterAmount();
-    await _applyDjFilterResonance();
-    await _applyBeatRepeatMix();
-    await _applyBeatRepeatDivision();
-    await _applyTransGateAmount();
-    await _applyTransGateDivision();
-    await _applyNoiseRiserAmount();
-    await _applyTapeStopAmount();
+    await _applyReverbDamping();
     final native = _native;
     if (native != null) {
       for (int i = 0; i < _fxTrackOutputDb.length; i++) {
@@ -523,22 +474,10 @@ class LooperProvider extends ChangeNotifier {
     await native.setCompressorAmount(_fxCompressorAmount);
   }
 
-  Future<void> _applyDistortionAmount() async {
-    final native = _native;
-    if (native == null) return;
-    await native.setDistortionAmount(_fxDistortionAmount);
-  }
-
   Future<void> _applySaturationAmount() async {
     final native = _native;
     if (native == null) return;
     await native.setSaturationAmount(_fxSaturationAmount);
-  }
-
-  Future<void> _applyDelaySend() async {
-    final native = _native;
-    if (native == null) return;
-    await native.setDelaySend(_fxDelaySend);
   }
 
   Future<void> _applyDelayDivision() async {
@@ -553,10 +492,16 @@ class LooperProvider extends ChangeNotifier {
     await native.setDelayFeel(_fxDelayFeel);
   }
 
-  Future<void> _applyReverbSend() async {
+  Future<void> _applyDelayFeedback() async {
     final native = _native;
     if (native == null) return;
-    await native.setReverbSend(_fxReverbSend);
+    await native.setDelayFeedback(_fxDelayFeedback);
+  }
+
+  Future<void> _applyDelayInput() async {
+    final native = _native;
+    if (native == null) return;
+    await native.setDelayInput(_fxDelayInput);
   }
 
   Future<void> _applyReverbRoomSize() async {
@@ -565,52 +510,10 @@ class LooperProvider extends ChangeNotifier {
     await native.setReverbRoomSize(_fxReverbRoomSize);
   }
 
-  Future<void> _applyDjFilterAmount() async {
+  Future<void> _applyReverbDamping() async {
     final native = _native;
     if (native == null) return;
-    await native.setDjFilterAmount(_fxDjFilterAmount);
-  }
-
-  Future<void> _applyDjFilterResonance() async {
-    final native = _native;
-    if (native == null) return;
-    await native.setDjFilterResonance(_fxDjFilterResonance);
-  }
-
-  Future<void> _applyBeatRepeatMix() async {
-    final native = _native;
-    if (native == null) return;
-    await native.setBeatRepeatMix(_fxBeatRepeatMix);
-  }
-
-  Future<void> _applyBeatRepeatDivision() async {
-    final native = _native;
-    if (native == null) return;
-    await native.setBeatRepeatDivision(_fxBeatRepeatDivision);
-  }
-
-  Future<void> _applyTransGateAmount() async {
-    final native = _native;
-    if (native == null) return;
-    await native.setTransGateAmount(_fxTransGateAmount);
-  }
-
-  Future<void> _applyTransGateDivision() async {
-    final native = _native;
-    if (native == null) return;
-    await native.setTransGateDivision(_fxTransGateDivision);
-  }
-
-  Future<void> _applyNoiseRiserAmount() async {
-    final native = _native;
-    if (native == null) return;
-    await native.setNoiseRiserAmount(_fxNoiseRiserAmount);
-  }
-
-  Future<void> _applyTapeStopAmount() async {
-    final native = _native;
-    if (native == null) return;
-    await native.setTapeStopAmount(_fxTapeStopAmount);
+    await native.setReverbDamping(_fxReverbDamping);
   }
 
   Future<void> playAll() async {
@@ -666,7 +569,9 @@ class LooperProvider extends ChangeNotifier {
       tracks: updated,
       transportState: TransportState.stopped,
       selectedTrackIndex: _firstEmptyTrackIndex(),
-      numTracksToRecord: _state.hasRecordedTracks ? 1 : _state.numTracksToRecord,
+      numTracksToRecord: _state.hasRecordedTracks
+          ? 1
+          : _state.numTracksToRecord,
     );
     notifyListeners();
   }
@@ -751,8 +656,8 @@ class LooperProvider extends ChangeNotifier {
           (track) => track.id == trackId
               ? track.copyWith(state: TrackState.armed)
               : track.hasAudio
-                  ? track.copyWith(state: TrackState.looping)
-                  : track.copyWith(state: TrackState.empty),
+              ? track.copyWith(state: TrackState.looping)
+              : track.copyWith(state: TrackState.empty),
         )
         .toList(growable: false);
     _state = _state.copyWith(
@@ -771,7 +676,9 @@ class LooperProvider extends ChangeNotifier {
     final int cycleBars = _longestPopulatedBarLength();
     final int masterCycleFrames = cycleBars * _beatsPerBar * spb;
     final int anchor = _playbackAnchorFrame ?? now;
-    int startFrame = anchor + (((now - anchor) ~/ masterCycleFrames) + 1) * masterCycleFrames;
+    int startFrame =
+        anchor +
+        (((now - anchor) ~/ masterCycleFrames) + 1) * masterCycleFrames;
     if (startFrame <= now) {
       startFrame += masterCycleFrames;
     }
@@ -790,8 +697,9 @@ class LooperProvider extends ChangeNotifier {
     await native.startMetronome();
     await native.setMetronomeAudible(false);
 
-    final int msUntilStart =
-        (((startFrame - now) * 1000) / sampleRate).round().clamp(0, 1 << 30);
+    final int msUntilStart = (((startFrame - now) * 1000) / sampleRate)
+        .round()
+        .clamp(0, 1 << 30);
 
     _armStartTimer?.cancel();
     _armStartTimer = Timer(Duration(milliseconds: msUntilStart), () {
@@ -820,7 +728,10 @@ class LooperProvider extends ChangeNotifier {
 
     _recordingTimer?.cancel();
     _recordingTimer = Timer(
-      Duration(milliseconds: msUntilStart + ((lengthFrames * 1000) / sampleRate).round()),
+      Duration(
+        milliseconds:
+            msUntilStart + ((lengthFrames * 1000) / sampleRate).round(),
+      ),
       () => _stopRecording(continuePlayback: true),
     );
 
@@ -894,7 +805,9 @@ class LooperProvider extends ChangeNotifier {
       _pendingTargets = List<int>.from(targets);
       _state = _state.copyWith(transportState: TransportState.countIn);
       notifyListeners();
-      debugPrint('[LooperProvider] no NativeAudioService; count-in visual only');
+      debugPrint(
+        '[LooperProvider] no NativeAudioService; count-in visual only',
+      );
       return;
     }
 
@@ -975,24 +888,20 @@ class LooperProvider extends ChangeNotifier {
     final int newId = _chainTargets[nextIdx];
     _chainCurrentIdx = nextIdx;
 
-    final List<Track> updated = _state.tracks.map((track) {
-      if (track.id == prevId) {
-        // Native engine has already auto-started playback on this track.
-        return track.copyWith(
-          hasAudio: true,
-          state: TrackState.looping,
-        );
-      }
-      if (track.id == newId) {
-        return track.copyWith(state: TrackState.recording);
-      }
-      return track;
-    }).toList(growable: false);
+    final List<Track> updated = _state.tracks
+        .map((track) {
+          if (track.id == prevId) {
+            // Native engine has already auto-started playback on this track.
+            return track.copyWith(hasAudio: true, state: TrackState.looping);
+          }
+          if (track.id == newId) {
+            return track.copyWith(state: TrackState.recording);
+          }
+          return track;
+        })
+        .toList(growable: false);
 
-    _state = _state.copyWith(
-      tracks: updated,
-      selectedTrackIndex: newId,
-    );
+    _state = _state.copyWith(tracks: updated, selectedTrackIndex: newId);
     notifyListeners();
 
     if (_headphoneSafetyEnabled && _isCaptureInProgress) {
@@ -1009,8 +918,8 @@ class LooperProvider extends ChangeNotifier {
           (track) => track.id == currentId
               ? track.copyWith(state: TrackState.recording)
               : track.hasAudio
-                  ? track.copyWith(state: TrackState.looping)
-                  : track.copyWith(state: TrackState.empty),
+              ? track.copyWith(state: TrackState.looping)
+              : track.copyWith(state: TrackState.empty),
         )
         .toList(growable: false);
 
@@ -1078,7 +987,7 @@ class LooperProvider extends ChangeNotifier {
     // flip UI states at the right moment.
     final List<int> starts = <int>[];
     int currentStart = firstStartFrame;
-    int localBeatCursor = 5;  // beat 5 = first recording downbeat
+    int localBeatCursor = 5; // beat 5 = first recording downbeat
     int totalLengthFrames = 0;
     for (int i = 0; i < targets.length; i++) {
       final trackIndex = targets[i];
@@ -1154,7 +1063,9 @@ class LooperProvider extends ChangeNotifier {
 
     _state = _state.copyWith(
       selectedTrackIndex: _firstEmptyTrackIndex(),
-      numTracksToRecord: _state.hasRecordedTracks ? 1 : _state.numTracksToRecord,
+      numTracksToRecord: _state.hasRecordedTracks
+          ? 1
+          : _state.numTracksToRecord,
     );
     notifyListeners();
   }
@@ -1210,11 +1121,16 @@ class LooperProvider extends ChangeNotifier {
   }) {
     final int selected = startIndex < 0 ? 0 : startIndex;
     final List<int> ordered = [
-      ...List<int>.generate(_state.tracks.length - selected, (i) => i + selected),
+      ...List<int>.generate(
+        _state.tracks.length - selected,
+        (i) => i + selected,
+      ),
       ...List<int>.generate(selected, (i) => i),
     ];
 
-    final emptyTracks = ordered.where((i) => !_state.tracks[i].hasAudio).toList();
+    final emptyTracks = ordered
+        .where((i) => !_state.tracks[i].hasAudio)
+        .toList();
     final int count = desiredCount.clamp(1, emptyTracks.length);
     return emptyTracks.take(count).toList();
   }
@@ -1255,9 +1171,13 @@ class LooperProvider extends ChangeNotifier {
 
     if (_activeRecordingTrackIds.isEmpty) {
       _state = _state.copyWith(
-        transportState: continuePlayback ? TransportState.playing : TransportState.stopped,
+        transportState: continuePlayback
+            ? TransportState.playing
+            : TransportState.stopped,
         selectedTrackIndex: _firstEmptyTrackIndex(),
-        numTracksToRecord: _state.hasRecordedTracks ? 1 : _state.numTracksToRecord,
+        numTracksToRecord: _state.hasRecordedTracks
+            ? 1
+            : _state.numTracksToRecord,
       );
       notifyListeners();
       return;
@@ -1274,13 +1194,17 @@ class LooperProvider extends ChangeNotifier {
           (track) => finalizedTrackIds.contains(track.id)
               ? track.copyWith(
                   hasAudio: true,
-                  state: continuePlayback ? TrackState.looping : TrackState.playing,
+                  state: continuePlayback
+                      ? TrackState.looping
+                      : TrackState.playing,
                 )
               : track.hasAudio
-                  ? track.copyWith(
-                      state: continuePlayback ? TrackState.looping : TrackState.playing,
-                    )
-                  : track.copyWith(state: TrackState.empty),
+              ? track.copyWith(
+                  state: continuePlayback
+                      ? TrackState.looping
+                      : TrackState.playing,
+                )
+              : track.copyWith(state: TrackState.empty),
         )
         .toList(growable: false);
 
@@ -1288,7 +1212,9 @@ class LooperProvider extends ChangeNotifier {
 
     _state = _state.copyWith(
       tracks: updatedTracks,
-      transportState: continuePlayback ? TransportState.playing : TransportState.stopped,
+      transportState: continuePlayback
+          ? TransportState.playing
+          : TransportState.stopped,
       selectedTrackIndex: _nextEmptyTrackIndexAfter(
         _selectionAnchorTrackId(finalizedTrackIds),
       ),
@@ -1303,7 +1229,10 @@ class LooperProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _playAudibleTracks(List<Track> tracks, {bool resetAnchor = false}) async {
+  Future<void> _playAudibleTracks(
+    List<Track> tracks, {
+    bool resetAnchor = false,
+  }) async {
     // Loop-phase anchor is set precisely when recording is armed, based on
     // the engine's sample-accurate start/length. Capturing currentFrame here
     // would introduce Dart-call latency and drift the phase, so we ignore
@@ -1319,7 +1248,7 @@ class LooperProvider extends ChangeNotifier {
     }
   }
 
-    bool get _isCaptureInProgress =>
+  bool get _isCaptureInProgress =>
       _state.transportState == TransportState.recording;
 
   bool _isTrackAudibleInCurrentMode(Track track) {
@@ -1344,10 +1273,7 @@ class LooperProvider extends ChangeNotifier {
       trackId: trackId,
       bucketCount: bucketCount,
     );
-    _updateTrack(
-      trackId,
-      (track) => track.copyWith(waveformPeaks: peaks),
-    );
+    _updateTrack(trackId, (track) => track.copyWith(waveformPeaks: peaks));
   }
 
   void _updateTrack(int trackId, Track Function(Track) update) {
@@ -1382,8 +1308,9 @@ class LooperProvider extends ChangeNotifier {
     }
 
     final int trackCount = _state.tracks.length;
-    final int normalizedAnchor =
-        anchorTrackId < 0 ? 0 : (anchorTrackId % trackCount);
+    final int normalizedAnchor = anchorTrackId < 0
+        ? 0
+        : (anchorTrackId % trackCount);
 
     for (int step = 1; step <= trackCount; step++) {
       final int idx = (normalizedAnchor + step) % trackCount;
