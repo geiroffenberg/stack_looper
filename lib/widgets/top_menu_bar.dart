@@ -8,6 +8,7 @@ class TopMenuBar extends StatelessWidget {
     required this.transportState,
     required this.onPlay,
     required this.onRecord,
+    required this.onMergePressed,
     required this.onToggleHeadphoneBleed,
     required this.headphoneSafetyEnabled,
     required this.onClearAll,
@@ -16,12 +17,12 @@ class TopMenuBar extends StatelessWidget {
     required this.beatFlash,
     required this.recordArmed,
     required this.armedBlinkOn,
-    required this.onSettingsPressed,
   });
 
   final TransportState transportState;
   final VoidCallback onPlay;
   final VoidCallback onRecord;
+  final VoidCallback onMergePressed;
   final VoidCallback onToggleHeadphoneBleed;
   final bool headphoneSafetyEnabled;
   final VoidCallback onClearAll;
@@ -30,7 +31,6 @@ class TopMenuBar extends StatelessWidget {
   final bool beatFlash;
   final bool recordArmed;
   final bool armedBlinkOn;
-  final VoidCallback onSettingsPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +46,7 @@ class TopMenuBar extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            flex: 5,
+            flex: 7,
             child: _ButtonGroup(
               borderColor: borderColor,
               child: Row(
@@ -71,13 +71,23 @@ class TopMenuBar extends StatelessWidget {
                       onPressed: onPlay,
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _TransportButton(
+                      customIcon: const _MergeRightIcon(),
+                      isActive: false,
+                      activeColor: Theme.of(context).colorScheme.primary,
+                      enabled: true,
+                      onPressed: onMergePressed,
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
-            flex: 7,
+            flex: 5,
             child: _ButtonGroup(
               borderColor: borderColor,
               child: Row(
@@ -105,14 +115,6 @@ class TopMenuBar extends StatelessWidget {
                       icon: Icons.tune_rounded,
                       tooltip: 'FX',
                       onPressed: onFxPressed,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: _MenuActionButton(
-                      icon: Icons.settings_rounded,
-                      tooltip: 'Settings',
-                      onPressed: onSettingsPressed,
                     ),
                   ),
                 ],
@@ -150,15 +152,17 @@ class _ButtonGroup extends StatelessWidget {
 
 class _TransportButton extends StatelessWidget {
   const _TransportButton({
-    required this.icon,
     required this.isActive,
     required this.activeColor,
     required this.enabled,
     required this.onPressed,
+    this.icon,
+    this.customIcon,
     this.flashActive = false,
-  });
+  }) : assert(icon != null || customIcon != null);
 
-  final IconData icon;
+  final IconData? icon;
+  final Widget? customIcon;
   final bool isActive;
   final Color activeColor;
   final bool enabled;
@@ -183,8 +187,67 @@ class _TransportButton extends StatelessWidget {
           width: 1,
         ),
       ),
-      icon: Icon(icon, color: isActive ? activeColor : null),
+      icon: customIcon ?? Icon(icon, color: isActive ? activeColor : null),
     );
+  }
+}
+
+class _MergeRightIcon extends StatelessWidget {
+  const _MergeRightIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color = Theme.of(context).iconTheme.color ?? Colors.white;
+    return CustomPaint(
+      size: const Size(22, 22),
+      painter: _MergeRightIconPainter(color: color),
+    );
+  }
+}
+
+class _MergeRightIconPainter extends CustomPainter {
+  const _MergeRightIconPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final Path path = Path()
+      ..moveTo(size.width * 0.14, size.height * 0.26)
+      ..lineTo(size.width * 0.38, size.height * 0.26)
+      ..quadraticBezierTo(
+        size.width * 0.52,
+        size.height * 0.26,
+        size.width * 0.62,
+        size.height * 0.50,
+      )
+      ..moveTo(size.width * 0.14, size.height * 0.74)
+      ..lineTo(size.width * 0.38, size.height * 0.74)
+      ..quadraticBezierTo(
+        size.width * 0.52,
+        size.height * 0.74,
+        size.width * 0.62,
+        size.height * 0.50,
+      )
+      ..moveTo(size.width * 0.62, size.height * 0.50)
+      ..lineTo(size.width * 0.82, size.height * 0.50)
+      ..moveTo(size.width * 0.72, size.height * 0.40)
+      ..lineTo(size.width * 0.82, size.height * 0.50)
+      ..lineTo(size.width * 0.72, size.height * 0.60);
+
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MergeRightIconPainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }
 

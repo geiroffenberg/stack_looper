@@ -21,6 +21,9 @@ class TrackCard extends StatelessWidget {
     required this.onReverbSendLevelChanged,
     required this.onToggleMute,
     required this.onBarLengthChanged,
+    this.fixedSlotLabel,
+    this.isSongTrack = false,
+    this.allowDelete = true,
   });
 
   final Track track;
@@ -36,23 +39,31 @@ class TrackCard extends StatelessWidget {
   final ValueChanged<double> onReverbSendLevelChanged;
   final VoidCallback onToggleMute;
   final ValueChanged<int> onBarLengthChanged;
+  final String? fixedSlotLabel;
+  final bool isSongTrack;
+  final bool allowDelete;
 
   @override
   Widget build(BuildContext context) {
     final Color selectedBorderColor = const Color(0xFF7DD3FC);
-    final borderColor = isSelected
+    final Color borderColor = isSelected
         ? selectedBorderColor
+        : isSongTrack
+        ? Theme.of(context).colorScheme.secondary.withOpacity(0.52)
         : Theme.of(context).dividerColor.withOpacity(0.72);
+    final Color cardColor = isSongTrack
+        ? Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.42)
+        : Theme.of(context).cardTheme.color ?? Theme.of(context).cardColor;
 
     return GestureDetector(
-      onLongPress: onDelete,
+      onLongPress: allowDelete ? onDelete : null,
       child: Container(
         height: 92,
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: borderColor, width: isSelected ? 2 : 1.5),
-          color: Theme.of(context).cardTheme.color,
+          color: cardColor,
           boxShadow: isSelected
               ? [
                   BoxShadow(
@@ -67,32 +78,34 @@ class TrackCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                SizedBox(
-                  width: 72,
-                  child: DropdownButtonFormField<int>(
-                    isDense: true,
-                    initialValue: track.barLength,
-                    decoration: const InputDecoration(
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 6,
-                      ),
-                    ),
-                    items: AppConstants.barLengthValues
-                        .map(
-                          (value) => DropdownMenuItem<int>(
-                            value: value,
-                            child: Text('$value'),
+                fixedSlotLabel != null
+                    ? _SongTrackSlot(label: fixedSlotLabel!)
+                    : SizedBox(
+                        width: 72,
+                        child: DropdownButtonFormField<int>(
+                          isDense: true,
+                          initialValue: track.barLength,
+                          decoration: const InputDecoration(
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
                           ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (updated) {
-                      if (updated != null) {
-                        onBarLengthChanged(updated);
-                      }
-                    },
-                  ),
-                ),
+                          items: AppConstants.barLengthValues
+                              .map(
+                                (value) => DropdownMenuItem<int>(
+                                  value: value,
+                                  child: Text('$value'),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (updated) {
+                            if (updated != null) {
+                              onBarLengthChanged(updated);
+                            }
+                          },
+                        ),
+                      ),
                 const Spacer(),
                 _TrackHeaderToggle(
                   tooltip: 'Delay send',
@@ -216,6 +229,36 @@ class TrackCard extends StatelessWidget {
           },
         );
       },
+    );
+  }
+}
+
+class _SongTrackSlot extends StatelessWidget {
+  const _SongTrackSlot({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 72,
+      height: 40,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withOpacity(0.55),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.secondary.withOpacity(0.6),
+          width: 1,
+        ),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.2,
+        ),
+      ),
     );
   }
 }

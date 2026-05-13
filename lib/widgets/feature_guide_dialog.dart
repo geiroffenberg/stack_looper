@@ -31,6 +31,21 @@ const String _featureGuideMd = '''# Feature Guide
 - Mixer / FX: Open per-track mixer and effects chain
 - Settings: Open app settings and appearance
 
+## Workflow
+
+### Chain ON
+- Press Record to automatically advance and record the next track in the chain.
+- Preset the number of bars for each track with the track number value.
+- Repeat sets how many times a track plays before moving to the next track. 0 is the default.
+- Tracks sets how many tracks will record in the chain. 6 is the default.
+
+### Chain OFF
+- Record one track at a time.
+- Each track starts after a four-beat count-in.
+
+### Recording Indicator
+- If the looper is already playing, the Record button flashes to show the next track is armed.
+
 ---
 
 ## Mixer & FX

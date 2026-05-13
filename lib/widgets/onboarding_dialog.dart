@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import '../providers/looper_provider.dart';
 
 class OnboardingDialog extends StatefulWidget {
   const OnboardingDialog({super.key});
@@ -34,7 +31,7 @@ class _OnboardingDialogState extends State<OnboardingDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = Provider.of<LooperProvider>(context, listen: false);
+
 
     return AlertDialog(
       title: const Text('Quick Tips'),
@@ -87,7 +84,7 @@ class _OnboardingDialogState extends State<OnboardingDialog> {
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Workflow: this app CAN be used as a normal track-by-track looper, but the intended workflow is to pre-set each track length and record tracks in one chained session. Example: set track 1 to 1 bar, track 2 to 2 bars — record the 1-bar beat, then immediately record chords on track 2. Use the Repeat button to set how many times a track repeats before recording moves to the next track.',
+                    'Workflow: this app CAN be used as a normal track-by-track looper, but the intended workflow is to pre-set each track length and record tracks in a chained session. Toggle the Chain button to enable/disable chained multi-track recording (default ON). Example: set track 1 to 1 bar, track 2 to 2 bars — record the 1-bar beat, then immediately record chords on track 2. Use the Repeat button to set how many times a track repeats before recording moves to the next track.',
                   ),
                 ),
               ],

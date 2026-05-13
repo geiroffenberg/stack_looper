@@ -16,6 +16,12 @@ namespace stack_looper {
 constexpr int kMaxTracks = 6;
 constexpr int kMaxTrackSeconds = 30;
 
+// Song tracks (A / B / C) capture the fully-processed master output (post-FX,
+// post-limiter) for exactly one loop cycle. They are kept separate from the
+// mic-recorded loop tracks so they never re-enter the FX chain on playback.
+constexpr int kMaxSongTracks = 3;
+constexpr int kMaxSongTrackSeconds = 120;
+
 // Lock-free SPSC (single-producer/single-consumer) ring buffer of floats.
 // The INPUT callback is the only writer; the OUTPUT callback is the only
 // reader. Capacity is rounded up to the next power of two so we can mask
@@ -67,6 +73,26 @@ struct Track {
   // it, the audio thread reads it every callback.
   std::atomic<bool> playing{false};
   int32_t play_pos = 0;               // audio-thread-only
+};
+
+// Song track: captures master output (post-FX) for one full loop cycle.
+// Shares the same state machine as Track but records from the output bus
+// instead of the mic ring.
+enum class SongTrackState : int {
+  kEmpty = 0,
+  kArmed = 1,
+  kRecording = 2,
+  kRecorded = 3,
+};
+
+struct SongTrack {
+  std::vector<float> buffer;         // capacity = kMaxSongTrackSeconds * sr
+  std::atomic<int> state{static_cast<int>(SongTrackState::kEmpty)};
+  int64_t start_frame = 0;           // audio-thread-only once armed
+  int32_t length_samples = 0;        // target length; set on arm, const after
+  int32_t write_pos = 0;             // audio-thread-only (recording)
+  std::atomic<bool> playing{false};
+  int32_t play_pos = 0;              // audio-thread-only
 };
 
 // The engine owns one duplex audio pipeline:
@@ -202,6 +228,31 @@ class Engine : public oboe::AudioStreamDataCallback,
   // buffer alone; only the bookkeeping and state flag are reset.
   void ClearTrack(int32_t track_id);
 
+  // ── Song track API ──────────────────────────────────────────────────────
+  // Arms a song track to capture [length_frames] samples of master output
+  // (post-FX, post-limiter), starting when the transport reaches [start_frame].
+  bool ArmSongTrackRecording(int32_t song_track_id,
+                             int64_t start_frame,
+                             int32_t length_frames);
+
+  // Offline render: renders exactly one master loop cycle into the specified
+  // song track buffer using a private copy of the current DSP state. Safe to
+  // call from any background thread while the audio callback is running —
+  // it only *reads* track buffers and *reads* atomic FX parameters. Writes
+  // only to song_tracks_[song_track_id].buffer and its bookkeeping fields,
+  // which the audio thread never touches while state == kEmpty/kArmed.
+  //
+  // [loop_length_frames] must be > 0. The song track is marked kRecorded on
+  // completion. Returns false on invalid arguments.
+  bool RenderMixToSongTrack(int32_t song_track_id,
+                            int32_t loop_length_frames);
+  void StartSongTrackPlayback(int32_t song_track_id);
+  void StopSongTrackPlayback(int32_t song_track_id);
+  void ClearSongTrack(int32_t song_track_id);
+  int32_t GetSongTrackState(int32_t song_track_id) const;
+  std::vector<float> SongTrackWaveformPeaks(int32_t song_track_id,
+                                            int32_t bucket_count) const;
+
   // oboe::AudioStreamDataCallback
   oboe::DataCallbackResult onAudioReady(oboe::AudioStream* stream,
                                         void* audio_data,
@@ -304,6 +355,9 @@ class Engine : public oboe::AudioStreamDataCallback,
   // real sample rate. Atomic state lets the control thread observe progress
   // without locking.
   std::array<Track, kMaxTracks> tracks_{};
+
+  // Song tracks: capture master output (post-FX). Allocated on Start().
+  std::array<SongTrack, kMaxSongTracks> song_tracks_{};
 
   // Mic ring buffer (SPSC: written by input CB, read by output CB). Allocated
   // on Start(); nullptr when engine is stopped.

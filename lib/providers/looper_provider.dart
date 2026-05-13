@@ -55,6 +55,16 @@ class LooperProvider extends ChangeNotifier {
   bool _headphoneSafetyEnabled = false;
   bool _chainEnabled = true;
 
+  // Song tracks: three fixed capture slots (A / B / C), native IDs 0,1,2.
+  List<SongTrack> _songTracks = List<SongTrack>.unmodifiable([
+    SongTrack(id: 100, label: 'A'),
+    SongTrack(id: 101, label: 'B'),
+    SongTrack(id: 102, label: 'C'),
+  ]);
+  int? _activeSongTrackId;
+  int? _selectedSongTrackId; // song track currently in exclusive solo mode
+  List<bool>? _savedLoopMuteStates; // loop track mutes saved before entering solo
+
   // Master FX page state.
   bool _fxEnabled = true;
   double _fxHighPassHz = 20.0;
@@ -109,6 +119,20 @@ class LooperProvider extends ChangeNotifier {
   int? get armedTrackId => _armedTrackId;
   bool get headphoneSafetyEnabled => _headphoneSafetyEnabled;
   bool get chainEnabled => _chainEnabled;
+  List<SongTrack> get songTracks => _songTracks;
+  bool get isMergingToSongTrack => _activeSongTrackId != null;
+  int? get selectedSongTrackId => _selectedSongTrackId;
+  int get longestPopulatedBarLength => _longestPopulatedBarLength();
+
+  /// Bar length of the currently-selected (soloing) song track, or null when
+  /// none is selected. Used by the UI to drive the playhead animation.
+  int? get selectedSongTrackBarLength {
+    final id = _selectedSongTrackId;
+    if (id == null) return null;
+    final idx = id - 100;
+    if (idx < 0 || idx >= _songTracks.length) return null;
+    return _songTracks[idx].barLength;
+  }
   bool get fxEnabled => _fxEnabled;
   double get fxHighPassHz => _fxHighPassHz;
   double get fxLowPassHz => _fxLowPassHz;
@@ -165,6 +189,190 @@ class LooperProvider extends ChangeNotifier {
   void setChainEnabled(bool enabled) {
     if (_chainEnabled == enabled) return;
     _chainEnabled = enabled;
+    notifyListeners();
+  }
+
+  // ── Song track merge ───────────────────────────────────────────────────
+
+  /// Starts a merge-to-song-track operation.
+  /// Returns true if merge was successfully started, false if all song
+  /// track slots are full or there are no loop tracks with audio.
+  Future<bool> mergeToNextSongTrack() async {
+    final native = _native;
+    if (native == null) return false;
+
+    // Must have recorded loop tracks to merge.
+    if (!_state.hasRecordedTracks) return false;
+
+    // Already merging — don't queue another.
+    if (_activeSongTrackId != null) return false;
+
+    // Find first free song track.
+    SongTrack? target;
+    for (final st in _songTracks) {
+      if (!st.hasAudio) {
+        target = st;
+        break;
+      }
+    }
+    if (target == null) return false;
+
+    final int nativeIdx = target.id - 100;
+    final int cycleBars = _longestPopulatedBarLength();
+    final int spb = await native.engine.samplesPerBeat();
+    final int loopLengthFrames = cycleBars * _beatsPerBar * spb;
+    if (loopLengthFrames <= 0) return false;
+
+    // Mark as capturing so the UI shows the blink animation.
+    _activeSongTrackId = target.id;
+    _updateSongTrack(target.id, (st) => st.copyWith(isCapturing: true));
+
+    // Offline render: runs on a Kotlin background thread, awaited here.
+    // The audio callback continues uninterrupted — both threads only READ
+    // the loop track buffers.
+    final bool ok = await native.renderMixToSongTrack(
+      songTrackId: nativeIdx,
+      loopLengthFrames: loopLengthFrames,
+    );
+
+    if (!ok || _activeSongTrackId != target.id) {
+      // Aborted (transport cleared) or render failed.
+      _activeSongTrackId = null;
+      _updateSongTrack(target.id, (st) => st.copyWith(isCapturing: false));
+      return false;
+    }
+
+    // Fetch waveform peaks and commit.
+    final int bucketCount = cycleBars * _waveformBucketsPerBar;
+    final List<double> peaks = await native.songTrackWaveformPeaks(
+      songTrackId: nativeIdx,
+      bucketCount: bucketCount,
+    );
+
+    _activeSongTrackId = null;
+    _updateSongTrack(
+      target.id,
+      (st) => st.copyWith(
+        hasAudio: true,
+        isCapturing: false,
+        isMuted: true,
+        waveformPeaks: peaks,
+        barLength: cycleBars,
+      ),
+    );
+    return true;
+  }
+
+  /// Tap a song track to enter exclusive solo mode; tap it again to exit.
+  ///
+  /// While a song track is selected:
+  ///  - All 6 loop tracks are silenced (their previous mute state is saved).
+  ///  - All other song tracks are stopped.
+  ///  - The tapped song track plays solo.
+  /// Tapping the same song track again restores loop tracks to their saved
+  /// mute state and stops the song track.
+  void toggleSongTrackMute(int songTrackId) {
+    final int nativeIdx = songTrackId - 100;
+    if (nativeIdx < 0 || nativeIdx >= _songTracks.length) return;
+    final st = _songTracks[nativeIdx];
+    if (!st.hasAudio) return;
+
+    if (_selectedSongTrackId == songTrackId) {
+      // --- Deselect: stop song track, restore loop tracks. ---
+      _selectedSongTrackId = null;
+      unawaited(_native?.stopSongTrackPlayback(nativeIdx));
+      // Mark song track as muted.
+      final List<SongTrack> updatedSong = List<SongTrack>.from(_songTracks);
+      updatedSong[nativeIdx] = st.copyWith(isMuted: true);
+      _songTracks = List<SongTrack>.unmodifiable(updatedSong);
+      // Restore loop tracks (also calls notifyListeners).
+      _restoreLoopMutesAfterSongTrackDeselect();
+    } else {
+      // --- Select: save loop mute states, silence loop tracks, solo this. ---
+      // Save current mute state of every loop track.
+      _savedLoopMuteStates = _state.tracks.map((t) => t.isMuted).toList();
+
+      // Force-mute any loop track that is currently playing.
+      final List<Track> forceMuted = List<Track>.from(_state.tracks);
+      for (int i = 0; i < forceMuted.length; i++) {
+        final track = forceMuted[i];
+        if (!track.isMuted) {
+          _preMuteTrackOutputDb[track.id] = _fxTrackOutputDb[track.id];
+          _fxTrackOutputDb[track.id] = _trackMinOutputDb;
+          unawaited(
+            _native?.setTrackOutputGainDb(
+              trackId: track.id,
+              db: _trackMinOutputDb,
+            ),
+          );
+          forceMuted[i] = track.copyWith(isMuted: true);
+        }
+      }
+      _state = _state.copyWith(tracks: List.unmodifiable(forceMuted));
+
+      // Stop all other song tracks, unmute only this one.
+      final List<SongTrack> updatedSong = _songTracks.map((other) {
+        if (other.id == songTrackId) return other.copyWith(isMuted: false);
+        if (!other.isMuted) {
+          unawaited(_native?.stopSongTrackPlayback(other.id - 100));
+          return other.copyWith(isMuted: true);
+        }
+        return other;
+      }).toList(growable: false);
+      _songTracks = List<SongTrack>.unmodifiable(updatedSong);
+
+      _selectedSongTrackId = songTrackId;
+      unawaited(_native?.startSongTrackPlayback(nativeIdx));
+      notifyListeners();
+    }
+  }
+
+  /// Restores loop track mute states that were saved before a song track solo.
+  void _restoreLoopMutesAfterSongTrackDeselect() {
+    final saved = _savedLoopMuteStates;
+    _savedLoopMuteStates = null;
+    if (saved == null) return;
+
+    final List<Track> restored = List<Track>.from(_state.tracks);
+    for (int i = 0; i < restored.length; i++) {
+      final track = restored[i];
+      // Only restore tracks that were not muted before entering solo.
+      if (track.id < saved.length && !saved[track.id]) {
+        final double restore = (_preMuteTrackOutputDb[track.id] ?? 0.0)
+            .clamp(_trackMinOutputDb, _trackMaxOutputDb);
+        _preMuteTrackOutputDb[track.id] = null;
+        _fxTrackOutputDb[track.id] = restore;
+        unawaited(
+          _native?.setTrackOutputGainDb(trackId: track.id, db: restore),
+        );
+        restored[i] = track.copyWith(isMuted: false);
+      }
+    }
+    _state = _state.copyWith(tracks: List.unmodifiable(restored));
+    notifyListeners();
+  }
+
+  Future<void> clearSongTrackAudio(int songTrackId) async {
+    final int nativeIdx = songTrackId - 100;
+    if (nativeIdx < 0 || nativeIdx >= 3) return;
+    await _native?.clearSongTrack(nativeIdx);
+    _updateSongTrack(
+      songTrackId,
+      (st) => st.copyWith(
+        hasAudio: false,
+        isMuted: true,
+        isCapturing: false,
+        waveformPeaks: const <double>[],
+      ),
+    );
+  }
+
+  void _updateSongTrack(int songTrackId, SongTrack Function(SongTrack) update) {
+    final int idx = songTrackId - 100;
+    if (idx < 0 || idx >= _songTracks.length) return;
+    final List<SongTrack> updated = List<SongTrack>.from(_songTracks);
+    updated[idx] = update(updated[idx]);
+    _songTracks = List<SongTrack>.unmodifiable(updated);
     notifyListeners();
   }
 
@@ -593,7 +801,34 @@ class LooperProvider extends ChangeNotifier {
     _countInBaseBeat = null;
     _playbackAnchorFrame = null;
     _resetChainState();
-    await _audioService.stopAll();
+
+    // Abort any in-progress song track merge. Clear _activeSongTrackId so
+    // the awaited renderMixToSongTrack call detects the abort and does not
+    // commit the result.
+    if (_activeSongTrackId != null) {
+      final int nativeIdx = _activeSongTrackId! - 100;
+      await _native?.clearSongTrack(nativeIdx);
+      _updateSongTrack(
+        _activeSongTrackId!,
+        (st) => st.copyWith(isCapturing: false),
+      );
+      _activeSongTrackId = null;
+    }
+
+    await _audioService.stopAll(); // also stops song track native playback
+
+    // If a song track was soloing, restore loop track mute states before we
+    // rebuild the final track list below.
+    if (_selectedSongTrackId != null) {
+      _selectedSongTrackId = null;
+      _restoreLoopMutesAfterSongTrackDeselect();
+    }
+
+    // Reflect stopped state on any song track that was playing (unmuted).
+    final List<SongTrack> stoppedSongTracks = _songTracks
+        .map((st) => st.isMuted ? st : st.copyWith(isMuted: true))
+        .toList(growable: false);
+    _songTracks = List<SongTrack>.unmodifiable(stoppedSongTracks);
 
     _activeRecordingTrackIds.clear();
     final List<Track> updated = _state.tracks
@@ -611,9 +846,6 @@ class LooperProvider extends ChangeNotifier {
       tracks: updated,
       transportState: TransportState.stopped,
       selectedTrackIndex: _firstEmptyTrackIndex(),
-      numTracksToRecord: _state.hasRecordedTracks
-          ? 1
-          : _state.numTracksToRecord,
     );
     notifyListeners();
   }
@@ -707,7 +939,6 @@ class LooperProvider extends ChangeNotifier {
       tracks: armedTracks,
       selectedTrackIndex: trackId,
       transportState: TransportState.playing,
-      numTracksToRecord: 1,
     );
     notifyListeners();
 
@@ -1112,9 +1343,6 @@ class LooperProvider extends ChangeNotifier {
 
     _state = _state.copyWith(
       selectedTrackIndex: _firstEmptyTrackIndex(),
-      numTracksToRecord: _state.hasRecordedTracks
-          ? 1
-          : _state.numTracksToRecord,
     );
     notifyListeners();
   }
@@ -1137,11 +1365,28 @@ class LooperProvider extends ChangeNotifier {
     _resetChainState();
     _activeRecordingTrackIds.clear();
 
-    await _audioService.stopAll();
+    // Clear any song track solo state without restoring mutes (all tracks are
+    // being wiped, so restoring mute state is meaningless).
+    _selectedSongTrackId = null;
+    _savedLoopMuteStates = null;
+    for (int i = 0; i < _preMuteTrackOutputDb.length; i++) {
+      _preMuteTrackOutputDb[i] = null;
+    }
+
+    // Abort any in-progress merge.
+    _activeSongTrackId = null;
+
+    await _audioService.stopAll(); // also stops song track native playback
+
     for (final track in _state.tracks) {
       if (track.hasAudio) {
         await _audioService.deleteTrack(track.id);
       }
+    }
+
+    // Clear all three song tracks on native side.
+    for (int i = 0; i < 3; i++) {
+      await _native?.clearSongTrack(i);
     }
 
     final List<Track> clearedTracks = _state.tracks
@@ -1155,11 +1400,16 @@ class LooperProvider extends ChangeNotifier {
         )
         .toList(growable: false);
 
+    _songTracks = List<SongTrack>.unmodifiable([
+      SongTrack(id: 100, label: 'A'),
+      SongTrack(id: 101, label: 'B'),
+      SongTrack(id: 102, label: 'C'),
+    ]);
+
     _state = _state.copyWith(
       tracks: clearedTracks,
       transportState: TransportState.stopped,
       selectedTrackIndex: 0,
-      numTracksToRecord: 1,
     );
     notifyListeners();
   }
@@ -1224,32 +1474,48 @@ class LooperProvider extends ChangeNotifier {
             ? TransportState.playing
             : TransportState.stopped,
         selectedTrackIndex: _firstEmptyTrackIndex(),
-        numTracksToRecord: _state.hasRecordedTracks
-            ? 1
-            : _state.numTracksToRecord,
       );
       notifyListeners();
       return;
     }
 
     final Set<int> finalizedTrackIds = Set<int>.from(_activeRecordingTrackIds);
+
+    // When the user explicitly stops (continuePlayback=false), abort any
+    // native recordings still in progress so the engine does not auto-start
+    // playback after Dart has returned to the stopped state.
+    // When the recording timer fires naturally (continuePlayback=true), native
+    // has already completed, so stopTrackRecording is a no-op there.
+    if (!continuePlayback) {
+      for (final trackId in finalizedTrackIds) {
+        await _audioService.stopTrackRecording(trackId);
+      }
+    }
+
+    // Determine which tracks actually have captured audio (completed
+    // recordings are kRecorded=3; aborted ones were cleared to kEmpty=0).
+    final Set<int> actuallyRecordedIds = <int>{};
     for (final trackId in finalizedTrackIds) {
-      await _audioService.stopTrackRecording(trackId);
+      if (await _audioService.hasRecordedAudio(trackId)) {
+        actuallyRecordedIds.add(trackId);
+      }
+    }
+
+    // Refresh waveform and normalise only for tracks with real audio.
+    for (final trackId in actuallyRecordedIds) {
       await _refreshTrackWaveform(trackId);
-      // Normalize newly recorded track to target peak level.
       try {
         final native = _native;
         if (native != null) {
           final peaks = _state.tracks[trackId].waveformPeaks;
           if (peaks.isNotEmpty) {
             final double maxPeak = peaks.reduce((a, b) => a > b ? a : b);
-            const double targetPeak = 0.95; // desired peak level (0..1)
+            const double targetPeak = 0.95;
             if (maxPeak > 0.0001) {
               final double gainFactor = (targetPeak / maxPeak).clamp(0.01, 100.0);
               final double gainDb = 20.0 * (math.log(gainFactor) / math.ln10);
-              // Clamp to safe range used elsewhere in the app
               final double clampedDb = gainDb.clamp(_trackMinOutputDb, _trackMaxOutputDb);
-              await native.setTrackOutputGainDb(trackId: trackId, db: clampedDb);
+              await _setTrackOutputGainInternal(trackId, clampedDb);
             }
           }
         }
@@ -1262,10 +1528,10 @@ class LooperProvider extends ChangeNotifier {
         .map(
           (track) => finalizedTrackIds.contains(track.id)
               ? track.copyWith(
-                  hasAudio: true,
-                  state: continuePlayback
-                      ? TrackState.looping
-                      : TrackState.playing,
+                  hasAudio: actuallyRecordedIds.contains(track.id),
+                  state: actuallyRecordedIds.contains(track.id)
+                      ? (continuePlayback ? TrackState.looping : TrackState.playing)
+                      : TrackState.empty,
                 )
               : track.hasAudio
               ? track.copyWith(
@@ -1285,9 +1551,8 @@ class LooperProvider extends ChangeNotifier {
           ? TransportState.playing
           : TransportState.stopped,
       selectedTrackIndex: _nextEmptyTrackIndexAfter(
-        _selectionAnchorTrackId(finalizedTrackIds),
+        _selectionAnchorTrackId(actuallyRecordedIds),
       ),
-      numTracksToRecord: 1,
     );
     notifyListeners();
 

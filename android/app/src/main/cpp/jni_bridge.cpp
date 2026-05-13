@@ -370,4 +370,70 @@ Java_com_example_stack_1looper_StackLooperAudio_nativeClearTrack(
   stack_looper::GetGlobalEngine().ClearTrack(static_cast<int32_t>(track_id));
 }
 
+// ── Song track JNI ─────────────────────────────────────────────────────────
+
+JNIEXPORT jboolean JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeArmSongTrackRecording(
+    JNIEnv* /*env*/, jclass /*clazz*/,
+    jint song_track_id, jlong start_frame, jint length_frames) {
+  return stack_looper::GetGlobalEngine().ArmSongTrackRecording(
+             static_cast<int32_t>(song_track_id),
+             static_cast<int64_t>(start_frame),
+             static_cast<int32_t>(length_frames))
+             ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeStartSongTrackPlayback(
+    JNIEnv* /*env*/, jclass /*clazz*/, jint song_track_id) {
+  stack_looper::GetGlobalEngine().StartSongTrackPlayback(
+      static_cast<int32_t>(song_track_id));
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeStopSongTrackPlayback(
+    JNIEnv* /*env*/, jclass /*clazz*/, jint song_track_id) {
+  stack_looper::GetGlobalEngine().StopSongTrackPlayback(
+      static_cast<int32_t>(song_track_id));
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeClearSongTrack(
+    JNIEnv* /*env*/, jclass /*clazz*/, jint song_track_id) {
+  stack_looper::GetGlobalEngine().ClearSongTrack(
+      static_cast<int32_t>(song_track_id));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeSongTrackState(
+    JNIEnv* /*env*/, jclass /*clazz*/, jint song_track_id) {
+  return static_cast<jint>(stack_looper::GetGlobalEngine().GetSongTrackState(
+      static_cast<int32_t>(song_track_id)));
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeSongTrackWaveformPeaks(
+    JNIEnv* env, jclass /*clazz*/, jint song_track_id, jint bucket_count) {
+  const auto peaks = stack_looper::GetGlobalEngine().SongTrackWaveformPeaks(
+      static_cast<int32_t>(song_track_id),
+      static_cast<int32_t>(bucket_count));
+  jfloatArray result = env->NewFloatArray(static_cast<jsize>(peaks.size()));
+  if (result == nullptr || peaks.empty()) return result;
+  env->SetFloatArrayRegion(
+      result, 0, static_cast<jsize>(peaks.size()), peaks.data());
+  return result;
+}
+
+// Offline render: renders one master loop cycle into the song track buffer on
+// the calling thread. Blocks until done (typically <10 ms for normal loop
+// lengths). Kotlin should call this from a background thread.
+JNIEXPORT jboolean JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeRenderMixToSongTrack(
+    JNIEnv* /*env*/, jclass /*clazz*/, jint song_track_id, jint loop_length_frames) {
+  return static_cast<jboolean>(
+      stack_looper::GetGlobalEngine().RenderMixToSongTrack(
+          static_cast<int32_t>(song_track_id),
+          static_cast<int32_t>(loop_length_frames)));
+}
+
 }  // extern "C"

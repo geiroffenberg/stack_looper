@@ -16,6 +16,7 @@ class SettingsBar extends StatefulWidget {
     required this.onNumTracksChanged,
     required this.chainEnabled,
     required this.onChainChanged,
+    required this.onSettingsPressed,
   });
 
   final int bpm;
@@ -28,6 +29,7 @@ class SettingsBar extends StatefulWidget {
   final ValueChanged<int> onNumTracksChanged;
   final bool chainEnabled;
   final ValueChanged<bool> onChainChanged;
+  final VoidCallback onSettingsPressed;
 
   @override
   State<SettingsBar> createState() => _SettingsBarState();
@@ -70,29 +72,13 @@ class _SettingsBarState extends State<SettingsBar> {
     widget.onBpmChanged(parsed);
   }
 
-  void _decreaseBpm() {
-    final int newBpm = (widget.bpm - 1).clamp(
-      AppConstants.minBpm,
-      AppConstants.maxBpm,
-    );
-    widget.onBpmChanged(newBpm);
-  }
-
-  void _increaseBpm() {
-    final int newBpm = (widget.bpm + 1).clamp(
-      AppConstants.minBpm,
-      AppConstants.maxBpm,
-    );
-    widget.onBpmChanged(newBpm);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Card(
       child: LayoutBuilder(
         builder: (context, constraints) {
           return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: ConstrainedBox(
@@ -102,7 +88,7 @@ class _SettingsBarState extends State<SettingsBar> {
                     _SettingsItem(
                       label: 'BPM',
                       child: SizedBox(
-                        width: 64,
+                        width: 54,
                         child: TextField(
                           controller: _bpmController,
                           keyboardType: TextInputType.number,
@@ -116,8 +102,8 @@ class _SettingsBarState extends State<SettingsBar> {
                             filled: false,
                             fillColor: Colors.transparent,
                             contentPadding: EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 10,
+                              horizontal: 6,
+                              vertical: 8,
                             ),
                             enabledBorder: InputBorder.none,
                             focusedBorder: InputBorder.none,
@@ -128,7 +114,7 @@ class _SettingsBarState extends State<SettingsBar> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     _SettingsItem(
                       label: 'Repeat',
                       framed: true,
@@ -138,7 +124,7 @@ class _SettingsBarState extends State<SettingsBar> {
                         onChanged: widget.onRepeatChanged,
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     _SettingsItem(
                       label: 'Tracks',
                       framed: true,
@@ -148,13 +134,34 @@ class _SettingsBarState extends State<SettingsBar> {
                         onChanged: widget.onNumTracksChanged,
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     _SettingsItem(
                       label: 'Chain',
                       framed: true,
-                      child: Switch.adaptive(
-                        value: widget.chainEnabled,
-                        onChanged: widget.onChainChanged,
+                      child: Transform.scale(
+                        scale: 0.82,
+                        child: Switch.adaptive(
+                          value: widget.chainEnabled,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          onChanged: widget.onChainChanged,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _SettingsItem(
+                      label: 'Settings',
+                      framed: true,
+                      child: SizedBox(
+                        width: 44,
+                        height: 36,
+                        child: IconButton(
+                          tooltip: 'Settings',
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                          onPressed: widget.onSettingsPressed,
+                          icon: const Icon(Icons.settings_rounded, size: 20),
+                        ),
                       ),
                     ),
                   ],
@@ -179,12 +186,12 @@ class _SettingsBarState extends State<SettingsBar> {
         Text(
           label,
           style: TextStyle(
-            fontSize: 11,
+            fontSize: 10,
             fontWeight: FontWeight.w600,
             color: Theme.of(context).textTheme.labelMedium?.color,
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 3),
         if (framed)
           Container(
             decoration: BoxDecoration(
@@ -195,7 +202,7 @@ class _SettingsBarState extends State<SettingsBar> {
               ),
               borderRadius: BorderRadius.circular(6),
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 3),
             child: child,
           )
         else
@@ -223,7 +230,7 @@ class _CompactDropdown extends StatelessWidget {
     }
 
     return SizedBox(
-      width: 70,
+      width: 58,
       child: DropdownButtonFormField<int>(
         isDense: true,
         initialValue: options.contains(value) ? value : options.first,
@@ -231,7 +238,7 @@ class _CompactDropdown extends StatelessWidget {
           isDense: true,
           filled: false,
           fillColor: Colors.transparent,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
           enabledBorder: InputBorder.none,
           focusedBorder: InputBorder.none,
           border: InputBorder.none,

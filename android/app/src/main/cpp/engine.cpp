@@ -320,6 +320,18 @@ oboe::Result Engine::Start() {
     t.playing.store(false, std::memory_order_release);
     t.play_pos = 0;
   }
+  const size_t song_track_cap =
+      static_cast<size_t>(kMaxSongTrackSeconds) * sample_rate_;
+  for (auto& st : song_tracks_) {
+    st.buffer.assign(song_track_cap, 0.0f);
+    st.state.store(static_cast<int>(SongTrackState::kEmpty),
+                   std::memory_order_release);
+    st.start_frame = 0;
+    st.length_samples = 0;
+    st.write_pos = 0;
+    st.playing.store(false, std::memory_order_release);
+    st.play_pos = 0;
+  }
   // 1 second of mic ring is plenty — the output callback drains it every
   // few ms, and overflow just drops stale samples.
   mic_ring_.reset(new MicRing(static_cast<size_t>(sample_rate_)));
@@ -790,7 +802,60 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
       out[i] = s > limiter ? limiter : (s < -limiter ? -limiter : s);
     }
 
-    // 10) Final safety clamp. Summing multiple tracks + click can exceed
+    // 10) Song track recording: capture master output AFTER the limiter.
+    //     Song tracks being captured have playing=false so they never
+    //     contribute to the mix that is being recorded (no feedback).
+    for (auto& st : song_tracks_) {
+      int state_int = st.state.load(std::memory_order_acquire);
+      const auto state = static_cast<SongTrackState>(state_int);
+      if (state == SongTrackState::kArmed) {
+        if (st.start_frame >= buf_end) continue;  // not yet
+        st.write_pos = 0;
+        st.state.store(static_cast<int>(SongTrackState::kRecording),
+                       std::memory_order_release);
+      }
+      if (static_cast<SongTrackState>(st.state.load(std::memory_order_acquire))
+          != SongTrackState::kRecording) continue;
+      const int32_t remaining = st.length_samples - st.write_pos;
+      if (remaining <= 0) {
+        st.state.store(static_cast<int>(SongTrackState::kRecorded),
+                       std::memory_order_release);
+        continue;
+      }
+      const int32_t to_write = std::min(remaining, num_frames);
+      std::memcpy(st.buffer.data() + st.write_pos, out,
+                  static_cast<size_t>(to_write) * sizeof(float));
+      st.write_pos += to_write;
+      if (st.write_pos >= st.length_samples) {
+        st.state.store(static_cast<int>(SongTrackState::kRecorded),
+                       std::memory_order_release);
+      }
+    }
+
+    // 11) Song track playback: add rendered song tracks into output AFTER
+    //     recording has been captured (prevents feedback).
+    for (auto& st : song_tracks_) {
+      if (!st.playing.load(std::memory_order_acquire)) continue;
+      const int32_t len = st.length_samples;
+      if (len <= 0) continue;
+      int32_t pos = st.play_pos;
+      if (pos >= len) pos = 0;
+      const float* src = st.buffer.data();
+      for (int32_t i = 0; i < num_frames; ++i) {
+        out[i] += src[pos];
+        if (++pos >= len) pos = 0;
+      }
+      st.play_pos = pos;
+    }
+
+    // 12) Final safety clamp. Summing multiple tracks + click can exceed
+    //    [-1,1] if misconfigured; this keeps output bounded.
+    //    clamp is ugly but cheap and prevents speaker-destroying transients;
+    //    a proper limiter can come later if it turns out to matter.
+    for (int32_t i = 0; i < num_frames; ++i) {
+      const float s = out[i];
+      out[i] = s > 1.0f ? 1.0f : (s < -1.0f ? -1.0f : s);
+    }
     //    [-1,1] if misconfigured; this keeps output bounded.
     //    clamp is ugly but cheap and prevents speaker-destroying transients;
     //    a proper limiter can come later if it turns out to matter.
@@ -1162,10 +1227,6 @@ bool Engine::IsTrackPlaying(int32_t track_id) const {
 void Engine::ClearTrack(int32_t track_id) {
   if (track_id < 0 || track_id >= kMaxTracks) return;
   Track& t = tracks_[track_id];
-  // Stop playback BEFORE clearing bookkeeping so the audio thread doesn't
-  // briefly read inconsistent state. The audio thread only uses
-  // length_samples / write_pos / play_pos when playing=true or state=armed/
-  // recording, so clearing them after disabling both flags is safe.
   t.playing.store(false, std::memory_order_release);
   t.state.store(static_cast<int>(stack_looper::TrackState::kEmpty),
                 std::memory_order_release);
@@ -1174,6 +1235,368 @@ void Engine::ClearTrack(int32_t track_id) {
   t.play_pos = 0;
   t.start_frame = 0;
   LOGI("ClearTrack: track=%d", track_id);
+}
+
+// ── Song track API ----------------------------------------------------------
+
+bool Engine::ArmSongTrackRecording(int32_t song_track_id,
+                                   int64_t start_frame,
+                                   int32_t length_frames) {
+  if (song_track_id < 0 || song_track_id >= kMaxSongTracks) return false;
+  SongTrack& st = song_tracks_[song_track_id];
+  const size_t cap = st.buffer.size();
+  const int32_t clamped = (cap > 0)
+      ? static_cast<int32_t>(std::min(static_cast<size_t>(length_frames), cap))
+      : 0;
+  if (clamped <= 0) return false;
+
+  st.playing.store(false, std::memory_order_release);
+  st.state.store(static_cast<int>(SongTrackState::kEmpty),
+                 std::memory_order_release);
+  st.write_pos = 0;
+  st.play_pos = 0;
+  st.length_samples = clamped;
+  st.start_frame = start_frame;
+  st.state.store(static_cast<int>(SongTrackState::kArmed),
+                 std::memory_order_release);
+  LOGI("ArmSongTrackRecording: id=%d startFrame=%lld length=%d",
+       song_track_id, (long long)start_frame, clamped);
+  return true;
+}
+
+void Engine::StartSongTrackPlayback(int32_t song_track_id) {
+  if (song_track_id < 0 || song_track_id >= kMaxSongTracks) return;
+  SongTrack& st = song_tracks_[song_track_id];
+  const auto state = static_cast<SongTrackState>(
+      st.state.load(std::memory_order_acquire));
+  if (state != SongTrackState::kRecorded) return;
+  st.play_pos = 0;
+  st.playing.store(true, std::memory_order_release);
+  LOGI("StartSongTrackPlayback: id=%d", song_track_id);
+}
+
+void Engine::StopSongTrackPlayback(int32_t song_track_id) {
+  if (song_track_id < 0 || song_track_id >= kMaxSongTracks) return;
+  song_tracks_[song_track_id].playing.store(false, std::memory_order_release);
+  LOGI("StopSongTrackPlayback: id=%d", song_track_id);
+}
+
+void Engine::ClearSongTrack(int32_t song_track_id) {
+  if (song_track_id < 0 || song_track_id >= kMaxSongTracks) return;
+  SongTrack& st = song_tracks_[song_track_id];
+  st.playing.store(false, std::memory_order_release);
+  st.state.store(static_cast<int>(SongTrackState::kEmpty),
+                 std::memory_order_release);
+  st.length_samples = 0;
+  st.write_pos = 0;
+  st.play_pos = 0;
+  st.start_frame = 0;
+  LOGI("ClearSongTrack: id=%d", song_track_id);
+}
+
+int32_t Engine::GetSongTrackState(int32_t song_track_id) const {
+  if (song_track_id < 0 || song_track_id >= kMaxSongTracks) return -1;
+  return song_tracks_[song_track_id].state.load(std::memory_order_acquire);
+}
+
+std::vector<float> Engine::SongTrackWaveformPeaks(int32_t song_track_id,
+                                                  int32_t bucket_count) const {
+  if (song_track_id < 0 || song_track_id >= kMaxSongTracks || bucket_count <= 0) {
+    return std::vector<float>(static_cast<size_t>(bucket_count), 0.0f);
+  }
+  const SongTrack& st = song_tracks_[song_track_id];
+  const int32_t recorded = st.write_pos;  // samples captured so far
+  if (recorded <= 0 || st.buffer.empty()) {
+    return std::vector<float>(static_cast<size_t>(bucket_count), 0.0f);
+  }
+
+  const float* buf = st.buffer.data();
+  const float samples_per_bucket =
+      static_cast<float>(recorded) / static_cast<float>(bucket_count);
+  std::vector<float> peaks(static_cast<size_t>(bucket_count), 0.0f);
+  for (int32_t b = 0; b < bucket_count; ++b) {
+    const int32_t start =
+        static_cast<int32_t>(b * samples_per_bucket);
+    const int32_t end =
+        static_cast<int32_t>((b + 1) * samples_per_bucket);
+    float peak = 0.0f;
+    for (int32_t i = start; i < end && i < recorded; ++i) {
+      const float abs = std::fabs(buf[i]);
+      if (abs > peak) peak = abs;
+    }
+    peaks[b] = peak;
+  }
+  return peaks;
+}
+
+bool Engine::RenderMixToSongTrack(int32_t song_track_id,
+                                  int32_t loop_length_frames) {
+  if (song_track_id < 0 || song_track_id >= kMaxSongTracks) return false;
+  if (loop_length_frames <= 0) return false;
+
+  SongTrack& st = song_tracks_[song_track_id];
+  const int32_t cap = static_cast<int32_t>(st.buffer.size());
+  if (cap == 0) return false;
+  const int32_t render_len = std::min(loop_length_frames, cap);
+
+  // Mark the song track as "recording" so the audio callback skips it for
+  // output (prevents it from playing half-rendered audio), but the audio
+  // thread only checks state for armed/recording when it transitions to
+  // recording — since we go directly from kEmpty to kRecorded here (on a
+  // background thread) with no start_frame interaction, the audio thread
+  // never enters the capture branch for this track. We just set kEmpty
+  // until we're done then atomically publish kRecorded.
+  st.playing.store(false, std::memory_order_release);
+  st.state.store(static_cast<int>(SongTrackState::kEmpty),
+                 std::memory_order_release);
+  st.write_pos = 0;
+  st.play_pos = 0;
+  st.length_samples = render_len;
+
+  // ── Snapshot all FX parameters from atomics ──────────────────────────
+  const float sr = static_cast<float>(sample_rate_);
+  const int32_t spb = samples_per_beat_.load(std::memory_order_acquire);
+
+  // Per-track gains and send levels.
+  std::array<float, kMaxTracks> track_gain{};
+  std::array<float, kMaxTracks> delay_send{};
+  std::array<float, kMaxTracks> reverb_send{};
+  for (int i = 0; i < kMaxTracks; ++i) {
+    track_gain[i] = track_output_gain_target_[i].load(std::memory_order_acquire);
+    delay_send[i] = Clamp01(track_delay_send_level_[i].load(std::memory_order_acquire));
+    reverb_send[i] = Clamp01(track_reverb_send_level_[i].load(std::memory_order_acquire));
+  }
+  const float master_gain = master_output_gain_target_.load(std::memory_order_acquire);
+  const float limiter = limiter_ceiling_linear_.load(std::memory_order_acquire);
+
+  const float hp_hz = ClampHz(high_pass_hz_.load(std::memory_order_acquire), sr);
+  const float lp_hz = ClampHz(low_pass_hz_.load(std::memory_order_acquire), sr);
+  const float eq_low_db = eq_low_db_.load(std::memory_order_acquire);
+  const float eq_mid_db = eq_mid_db_.load(std::memory_order_acquire);
+  const float eq_high_db = eq_high_db_.load(std::memory_order_acquire);
+  const float compressor_amount = Clamp01(compressor_amount_.load(std::memory_order_acquire));
+  const float saturation_amount = Clamp01(saturation_amount_.load(std::memory_order_acquire));
+
+  const int32_t delay_division = NormalizeDivision(delay_division_.load(std::memory_order_acquire));
+  const int32_t delay_feel = NormalizeDelayFeel(delay_feel_.load(std::memory_order_acquire));
+  const float delay_feedback = std::min(0.95f, Clamp01(delay_feedback_.load(std::memory_order_acquire)));
+  const float delay_input_level = Clamp01(delay_input_.load(std::memory_order_acquire));
+  const float reverb_room_size = Clamp01(reverb_room_size_.load(std::memory_order_acquire));
+  const float reverb_damping = Clamp01(reverb_damping_.load(std::memory_order_acquire));
+
+  // ── Pre-compute biquad coefficients ──────────────────────────────────
+  const BiquadCoeffs c_hpf = MakeHighPass(sr, hp_hz, 0.707f);
+  const BiquadCoeffs c_lpf = MakeLowPass(sr, lp_hz, 0.707f);
+  const BiquadCoeffs c_low = MakeLowShelf(sr, 120.0f, eq_low_db);
+  const BiquadCoeffs c_mid = MakePeaking(sr, 1000.0f, 1.0f, eq_mid_db);
+  const BiquadCoeffs c_high = MakeHighShelf(sr, 8000.0f, eq_high_db);
+
+  const BiquadCoeffs biquads[5] = {c_hpf, c_lpf, c_low, c_mid, c_high};
+  float bz1[5] = {0, 0, 0, 0, 0};
+  float bz2[5] = {0, 0, 0, 0, 0};
+
+  // ── Private compressor state ──────────────────────────────────────────
+  float comp_env = 0.0f;
+  float comp_gain_val = 1.0f;
+  const float comp_threshold_db = -8.0f - 28.0f * compressor_amount;
+  const float comp_ratio = 1.0f + compressor_amount * 19.0f;
+  const float sat_drive = 1.0f + saturation_amount * 8.0f;
+  const float sat_norm = std::tanh(sat_drive);
+
+  // ── Private delay buffer ──────────────────────────────────────────────
+  const int32_t delay_buf_len = sample_rate_ * 2;
+  std::vector<float> delay_buf(static_cast<size_t>(delay_buf_len), 0.0f);
+  int32_t delay_write = 0;
+
+  const float base_delay_samples = static_cast<float>(std::max(1, (spb * 4) / delay_division));
+  const float feel_mul = delay_feel == 1 ? 1.5f : (delay_feel == 2 ? (2.0f / 3.0f) : 1.0f);
+  const int32_t delay_samples = std::max(
+      1,
+      std::min(delay_buf_len - 1,
+               static_cast<int32_t>(std::round(base_delay_samples * feel_mul))));
+
+  // ── Private reverb state ──────────────────────────────────────────────
+  const std::array<int32_t, 3> reverb_buf_len = {
+      std::max(1, sample_rate_ * 29 / 1000),
+      std::max(1, sample_rate_ * 37 / 1000),
+      std::max(1, sample_rate_ * 43 / 1000),
+  };
+  std::array<std::vector<float>, 3> reverb_bufs;
+  for (int lane = 0; lane < 3; ++lane) {
+    reverb_bufs[lane].assign(static_cast<size_t>(reverb_buf_len[lane]), 0.0f);
+  }
+  std::array<int32_t, 3> reverb_pos = {0, 0, 0};
+  float rev_lp = 0.0f;
+
+  const float room_scale = 0.72f + reverb_room_size * 0.56f;
+  const std::array<float, 3> reverb_feedback_arr = {
+      std::min(0.965f, 0.78f + reverb_room_size * 0.15f),
+      std::min(0.972f, 0.81f + reverb_room_size * 0.14f),
+      std::min(0.958f, 0.76f + reverb_room_size * 0.16f),
+  };
+  const int32_t reverb_pre_delay = std::max(
+      1,
+      std::min(delay_buf_len - 1,
+               static_cast<int32_t>(sample_rate_ * (0.018f + reverb_room_size * 0.060f))));
+  const float reverb_lp_coeff = 0.02f + ((1.0f - reverb_damping) * 0.10f);
+  const float reverb_wet_gain = 0.34f + reverb_room_size * 0.28f;
+
+  // ── Snapshot track play positions so render is phase-coherent ────────
+  // We read each track's current play_pos atomically before the render loop.
+  // The render loop then reads sequentially from that offset, wrapping at
+  // length_samples.  The audio callback advances its own copy of play_pos
+  // independently — the two never conflict.
+  std::array<int32_t, kMaxTracks> track_play_pos{};
+  for (int i = 0; i < kMaxTracks; ++i) {
+    track_play_pos[i] = tracks_[i].play_pos;  // audio-thread field, read-only here
+  }
+
+  // Smoothed gain state per track (start from current smoothed value snapshot).
+  std::array<float, kMaxTracks> track_gain_smoothed{};
+  for (int i = 0; i < kMaxTracks; ++i) {
+    track_gain_smoothed[i] = track_output_gain_smoothed_[i];  // read-only
+  }
+  float master_gain_smoothed = master_output_gain_smoothed_;  // read-only
+
+  // ── Process chunk size ────────────────────────────────────────────────
+  constexpr int32_t kChunkSize = 256;
+  std::vector<float> chunk(static_cast<size_t>(kChunkSize), 0.0f);
+  std::vector<float> delay_scratch(static_cast<size_t>(kChunkSize), 0.0f);
+  std::vector<float> reverb_scratch(static_cast<size_t>(kChunkSize), 0.0f);
+
+  float* dst = st.buffer.data();
+  int32_t frames_done = 0;
+
+  while (frames_done < render_len) {
+    const int32_t n = std::min(kChunkSize, render_len - frames_done);
+
+    std::fill_n(chunk.data(), n, 0.0f);
+    std::fill_n(delay_scratch.data(), n, 0.0f);
+    std::fill_n(reverb_scratch.data(), n, 0.0f);
+
+    // Step 4: mix playing loop tracks.
+    constexpr float kGainSmoothing = 0.0025f;
+    for (int t_id = 0; t_id < kMaxTracks; ++t_id) {
+      const Track& t = tracks_[t_id];
+      if (!t.playing.load(std::memory_order_acquire)) continue;
+      const int32_t len = t.length_samples;
+      if (len <= 0) continue;
+      const float g_target = track_gain[t_id];
+      float g = track_gain_smoothed[t_id];
+      const float ds = delay_send[t_id];
+      const float rs = reverb_send[t_id];
+      int32_t pos = track_play_pos[t_id];
+      if (pos >= len) pos = 0;
+      const float* src = t.buffer.data();
+      for (int32_t i = 0; i < n; ++i) {
+        g += (g_target - g) * kGainSmoothing;
+        const float s = src[pos] * g;
+        chunk[i] += s;
+        if (ds > 0.0001f) delay_scratch[i] += s * ds;
+        if (rs > 0.0001f) reverb_scratch[i] += s * rs;
+        if (++pos >= len) pos = 0;
+      }
+      track_play_pos[t_id] = pos;
+      track_gain_smoothed[t_id] = g;
+    }
+
+    // Step 5: master gain.
+    constexpr float kMasterGainSmoothing = 0.0025f;
+    float mg = master_gain_smoothed;
+    for (int32_t i = 0; i < n; ++i) {
+      mg += (master_gain - mg) * kMasterGainSmoothing;
+      chunk[i] *= mg;
+    }
+    master_gain_smoothed = mg;
+
+    // Step 6: EQ/filter biquad chain.
+    for (int32_t i = 0; i < n; ++i) {
+      float x = chunk[i];
+      for (int biq = 0; biq < 5; ++biq) {
+        const float y = biquads[biq].b0 * x + bz1[biq];
+        bz1[biq] = biquads[biq].b1 * x - biquads[biq].a1 * y + bz2[biq];
+        bz2[biq] = biquads[biq].b2 * x - biquads[biq].a2 * y;
+        x = y;
+      }
+      chunk[i] = x;
+    }
+
+    // Step 7: compressor + saturation.
+    if (compressor_amount > 0.0001f || saturation_amount > 0.0001f) {
+      constexpr float attack = 0.02f;
+      constexpr float release = 0.00012f;
+      for (int32_t i = 0; i < n; ++i) {
+        float x = chunk[i];
+        if (compressor_amount > 0.0001f) {
+          const float abs_x = std::fabs(x);
+          const float coeff = abs_x > comp_env ? attack : release;
+          comp_env += (abs_x - comp_env) * coeff;
+          const float ldb = 20.0f * std::log10(std::max(comp_env, 0.000001f));
+          const float over = ldb - comp_threshold_db;
+          const float gdb = (over > 0.0f) ? -over * (1.0f - 1.0f / comp_ratio) : 0.0f;
+          const float tg = std::pow(10.0f, gdb / 20.0f);
+          comp_gain_val += (tg - comp_gain_val) * 0.06f;
+          x *= comp_gain_val;
+        }
+        if (saturation_amount > 0.0001f && sat_norm > 0.000001f) {
+          const float soft = std::tanh(x * sat_drive) / sat_norm;
+          x = x * (1.0f - saturation_amount) + soft * saturation_amount;
+        }
+        chunk[i] = x;
+      }
+    }
+
+    // Step 8: delay + reverb.
+    for (int32_t i = 0; i < n; ++i) {
+      float x = chunk[i];
+      const int32_t read = (delay_write - delay_samples + delay_buf_len) % delay_buf_len;
+      const float tap = delay_buf[read];
+      delay_buf[delay_write] = (delay_scratch[i] * delay_input_level) + (tap * delay_feedback);
+      x += tap * 0.55f;
+
+      const int32_t pre_read = (delay_write - reverb_pre_delay + delay_buf_len) % delay_buf_len;
+      const float rev_in = reverb_scratch[i] + delay_buf[pre_read] * 0.35f;
+      float rev_wet = 0.0f;
+      for (int lane = 0; lane < 3; ++lane) {
+        auto& rb = reverb_bufs[lane];
+        const int32_t usable_len = std::max(
+            1,
+            std::min(static_cast<int32_t>(rb.size()) - 1,
+                     static_cast<int32_t>(rb.size() * room_scale)));
+        int32_t rpos = reverb_pos[lane];
+        if (rpos >= usable_len) rpos = 0;
+        const float rtap = rb[rpos];
+        rev_wet += rtap;
+        rb[rpos] = rev_in + rtap * reverb_feedback_arr[lane];
+        if (++rpos >= usable_len) rpos = 0;
+        reverb_pos[lane] = rpos;
+      }
+      rev_lp += (rev_wet - rev_lp) * reverb_lp_coeff;
+      x += rev_lp * reverb_wet_gain;
+
+      if (++delay_write >= delay_buf_len) delay_write = 0;
+      chunk[i] = x;
+    }
+
+    // Step 9: limiter.
+    for (int32_t i = 0; i < n; ++i) {
+      const float s = chunk[i];
+      chunk[i] = s > limiter ? limiter : (s < -limiter ? -limiter : s);
+    }
+
+    // Write chunk to song track buffer.
+    std::memcpy(dst + frames_done, chunk.data(), static_cast<size_t>(n) * sizeof(float));
+    frames_done += n;
+  }
+
+  st.write_pos = render_len;
+  // Publish kRecorded atomically. After this, the audio thread can see the
+  // new state and play it back if StartSongTrackPlayback is called.
+  st.state.store(static_cast<int>(SongTrackState::kRecorded),
+                 std::memory_order_release);
+
+  LOGI("RenderMixToSongTrack: id=%d frames=%d", song_track_id, render_len);
+  return true;
 }
 
 Engine& GetGlobalEngine() {

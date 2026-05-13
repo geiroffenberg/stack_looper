@@ -81,6 +81,24 @@ class StackLooperAudio(flutterEngine: FlutterEngine) {
         @JvmStatic external fun nativeStopTrackPlayback(trackId: Int)
         @JvmStatic external fun nativeIsTrackPlaying(trackId: Int): Boolean
         @JvmStatic external fun nativeClearTrack(trackId: Int)
+
+        // Song tracks (A / B / C) — capture master output post-FX.
+        @JvmStatic external fun nativeArmSongTrackRecording(
+            songTrackId: Int, startFrame: Long, lengthFrames: Int,
+        ): Boolean
+        @JvmStatic external fun nativeStartSongTrackPlayback(songTrackId: Int)
+        @JvmStatic external fun nativeStopSongTrackPlayback(songTrackId: Int)
+        @JvmStatic external fun nativeClearSongTrack(songTrackId: Int)
+        @JvmStatic external fun nativeSongTrackState(songTrackId: Int): Int
+        @JvmStatic external fun nativeSongTrackWaveformPeaks(
+            songTrackId: Int, bucketCount: Int,
+        ): FloatArray
+
+        // Offline render: renders one master loop cycle into the song track
+        // buffer on the calling thread. Call from a background thread.
+        @JvmStatic external fun nativeRenderMixToSongTrack(
+            songTrackId: Int, loopLengthFrames: Int,
+        ): Boolean
     }
 
     private val channel = MethodChannel(
@@ -341,6 +359,64 @@ class StackLooperAudio(flutterEngine: FlutterEngine) {
                     val id = (call.arguments as? Number)?.toInt()
                     if (id == null) result.error("BAD_ARGS", "clearTrack expects int", null)
                     else { nativeClearTrack(id); result.success(null) }
+                }
+                "armSongTrackRecording" -> {
+                    val args = call.arguments as? Map<*, *>
+                    val songTrackId = (args?.get("songTrackId") as? Number)?.toInt()
+                    val startFrame = (args?.get("startFrame") as? Number)?.toLong()
+                    val lengthFrames = (args?.get("lengthFrames") as? Number)?.toInt()
+                    if (songTrackId == null || startFrame == null || lengthFrames == null) {
+                        result.error("BAD_ARGS",
+                            "armSongTrackRecording expects {songTrackId, startFrame, lengthFrames}", null)
+                    } else {
+                        result.success(nativeArmSongTrackRecording(songTrackId, startFrame, lengthFrames))
+                    }
+                }
+                "startSongTrackPlayback" -> {
+                    val id = (call.arguments as? Number)?.toInt()
+                    if (id == null) result.error("BAD_ARGS", "startSongTrackPlayback expects int", null)
+                    else { nativeStartSongTrackPlayback(id); result.success(null) }
+                }
+                "stopSongTrackPlayback" -> {
+                    val id = (call.arguments as? Number)?.toInt()
+                    if (id == null) result.error("BAD_ARGS", "stopSongTrackPlayback expects int", null)
+                    else { nativeStopSongTrackPlayback(id); result.success(null) }
+                }
+                "clearSongTrack" -> {
+                    val id = (call.arguments as? Number)?.toInt()
+                    if (id == null) result.error("BAD_ARGS", "clearSongTrack expects int", null)
+                    else { nativeClearSongTrack(id); result.success(null) }
+                }
+                "songTrackState" -> {
+                    val id = (call.arguments as? Number)?.toInt()
+                    if (id == null) result.error("BAD_ARGS", "songTrackState expects int", null)
+                    else result.success(nativeSongTrackState(id))
+                }
+                "songTrackWaveformPeaks" -> {
+                    val args = call.arguments as? Map<*, *>
+                    val id = (args?.get("songTrackId") as? Number)?.toInt()
+                    val bucketCount = (args?.get("bucketCount") as? Number)?.toInt()
+                    if (id == null || bucketCount == null) {
+                        result.error("BAD_ARGS", "songTrackWaveformPeaks expects {songTrackId, bucketCount}", null)
+                    } else {
+                        result.success(nativeSongTrackWaveformPeaks(id, bucketCount).toList())
+                    }
+                }
+                "renderMixToSongTrack" -> {
+                    val args = call.arguments as? Map<*, *>
+                    val songTrackId = (args?.get("songTrackId") as? Number)?.toInt()
+                    val loopLengthFrames = (args?.get("loopLengthFrames") as? Number)?.toInt()
+                    if (songTrackId == null || loopLengthFrames == null) {
+                        result.error("BAD_ARGS",
+                            "renderMixToSongTrack expects {songTrackId, loopLengthFrames}", null)
+                    } else {
+                        // Run the blocking render on a background thread so we
+                        // don't stall the Flutter UI or the audio callback thread.
+                        Thread {
+                            val ok = nativeRenderMixToSongTrack(songTrackId, loopLengthFrames)
+                            mainHandler.post { result.success(ok) }
+                        }.start()
+                    }
                 }
                 else -> result.notImplemented()
             }

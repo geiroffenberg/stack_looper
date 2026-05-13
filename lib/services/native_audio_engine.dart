@@ -157,6 +157,101 @@ class NativeAudioEngine {
   Future<void> clearTrack(int trackId) =>
       _channel.invokeMethod<void>('clearTrack', trackId);
 
+  // ── Song tracks (A / B / C) ─────────────────────────────────────────────
+  // Song tracks capture the fully-processed master output (post-FX, post-
+  // limiter) for exactly one full loop length. Native IDs are 0, 1, 2.
+
+  /// Arms a song track to capture [lengthFrames] of master output, starting
+  /// when the transport reaches [startFrame]. Returns false for invalid id.
+  Future<bool> armSongTrackRecording({
+    required int songTrackId,
+    required int startFrame,
+    required int lengthFrames,
+  }) async {
+    try {
+      final ok = await _channel.invokeMethod<bool>('armSongTrackRecording', {
+        'songTrackId': songTrackId,
+        'startFrame': startFrame,
+        'lengthFrames': lengthFrames,
+      });
+      return ok ?? false;
+    } on MissingPluginException {
+      debugPrint('[NativeAudioEngine] armSongTrackRecording unavailable');
+      return false;
+    }
+  }
+
+  Future<void> startSongTrackPlayback(int songTrackId) async {
+    try {
+      await _channel.invokeMethod<void>('startSongTrackPlayback', songTrackId);
+    } on MissingPluginException {
+      debugPrint('[NativeAudioEngine] startSongTrackPlayback unavailable');
+    }
+  }
+
+  Future<void> stopSongTrackPlayback(int songTrackId) async {
+    try {
+      await _channel.invokeMethod<void>('stopSongTrackPlayback', songTrackId);
+    } on MissingPluginException {
+      debugPrint('[NativeAudioEngine] stopSongTrackPlayback unavailable');
+    }
+  }
+
+  Future<void> clearSongTrack(int songTrackId) async {
+    try {
+      await _channel.invokeMethod<void>('clearSongTrack', songTrackId);
+    } on MissingPluginException {
+      debugPrint('[NativeAudioEngine] clearSongTrack unavailable');
+    }
+  }
+
+  /// Raw song track state: 0=empty, 1=armed, 2=recording, 3=recorded, -1=invalid.
+  Future<int> songTrackState(int songTrackId) async {
+    try {
+      final s = await _channel.invokeMethod<int>('songTrackState', songTrackId);
+      return s ?? -1;
+    } on MissingPluginException {
+      return -1;
+    }
+  }
+
+  Future<List<double>> songTrackWaveformPeaks({
+    required int songTrackId,
+    required int bucketCount,
+  }) async {
+    try {
+      final raw = await _channel.invokeListMethod<dynamic>(
+        'songTrackWaveformPeaks',
+        {'songTrackId': songTrackId, 'bucketCount': bucketCount},
+      );
+      return raw
+              ?.map((v) => (v as num).toDouble())
+              .toList(growable: false) ??
+          List<double>.filled(bucketCount, 0.0, growable: false);
+    } on MissingPluginException {
+      return List<double>.filled(bucketCount, 0.0, growable: false);
+    }
+  }
+
+  /// Offline render: renders [loopLengthFrames] of the current loop mix into
+  /// the song track buffer. Blocks on the Kotlin background thread until done
+  /// (typically a few ms). Returns true on success.
+  Future<bool> renderMixToSongTrack({
+    required int songTrackId,
+    required int loopLengthFrames,
+  }) async {
+    try {
+      final ok = await _channel.invokeMethod<bool>('renderMixToSongTrack', {
+        'songTrackId': songTrackId,
+        'loopLengthFrames': loopLengthFrames,
+      });
+      return ok ?? false;
+    } on MissingPluginException {
+      debugPrint('[NativeAudioEngine] renderMixToSongTrack unavailable');
+      return false;
+    }
+  }
+
   Future<void> setMasterOutputGainDb(double db) async {
     try {
       await _channel.invokeMethod<void>('setMasterOutputGainDb', db);

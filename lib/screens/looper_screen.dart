@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../constants/app_constants.dart';
 import '../models/looper_state.dart';
+import '../models/track.dart';
 import '../providers/looper_provider.dart';
 import '../screens/fx_screen.dart';
 import '../screens/settings_screen.dart';
@@ -31,6 +32,8 @@ class _LooperScreenState extends State<LooperScreen>
   TransportState? _lastTransportState;
   int? _lastBpm;
   int? _lastVisualDividers;
+  int? _lastSelectedSongTrackBarLength;
+  int? _lastLongestBarLength;
 
   @override
   void initState() {
@@ -58,6 +61,9 @@ class _LooperScreenState extends State<LooperScreen>
           state: state,
           bpm: state.bpm,
           visualBarDividers: visualBarDividers,
+          selectedSongTrackBarLength:
+              provider.selectedSongTrackBarLength,
+          longestBarLength: provider.longestPopulatedBarLength,
         );
 
         return Scaffold(
@@ -77,6 +83,13 @@ class _LooperScreenState extends State<LooperScreen>
                     onNumTracksChanged: provider.setNumTracksToRecord,
                     chainEnabled: provider.chainEnabled,
                     onChainChanged: provider.setChainEnabled,
+                    onSettingsPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const SettingsScreen(),
+                        ),
+                      );
+                    },
                   ),
                   const SizedBox(height: 8),
                   Expanded(
@@ -90,48 +103,112 @@ class _LooperScreenState extends State<LooperScreen>
                             ? _playheadController.value
                             : 0;
 
-                        return ListView.builder(
-                          itemCount: state.tracks.length,
-                          itemBuilder: (context, index) {
-                            final track = state.tracks[index];
-                            final bool isArmedTrack =
-                                provider.armedTrackId != null &&
-                                provider.armedTrackId == track.id;
-                            final double trackPlayheadProgress =
-                                _trackPlayheadProgress(
-                                  globalProgress: globalPlayheadProgress,
-                                  visualBarDividers: visualBarDividers,
-                                  trackBarLength: track.barLength,
-                                );
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: TrackCard(
-                                track: track,
-                                isSelected:
-                                    !track.hasAudio &&
-                                    state.selectedTrackIndex == index,
-                                visualBarDividers: visualBarDividers,
-                                playheadProgress: isArmedTrack
-                                    ? 0
-                                    : trackPlayheadProgress,
-                                isArmed: isArmedTrack,
-                                armedBlinkOn: provider.armedBlinkOn,
-                                onDelete: () =>
-                                    provider.deleteTrackAudio(index),
-                                onToggleDelaySend: () =>
-                                    provider.toggleTrackDelaySend(index),
-                                onToggleReverbSend: () =>
-                                    provider.toggleTrackReverbSend(index),
-                                onDelaySendLevelChanged: (level) => provider
-                                    .setTrackDelaySendLevel(index, level),
-                                onReverbSendLevelChanged: (level) => provider
-                                    .setTrackReverbSendLevel(index, level),
-                                onToggleMute: () => provider.toggleMute(index),
-                                onBarLengthChanged: (barLength) => provider
-                                    .setTrackBarLength(index, barLength),
+                        return ListView(
+                          children: [
+                            for (int index = 0; index < state.tracks.length; index++)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: Builder(
+                                  builder: (context) {
+                                    final track = state.tracks[index];
+                                    final bool isArmedTrack =
+                                        provider.armedTrackId != null &&
+                                        provider.armedTrackId == track.id;
+                                    final double trackPlayheadProgress =
+                                        _trackPlayheadProgress(
+                                          globalProgress: globalPlayheadProgress,
+                                          visualBarDividers: visualBarDividers,
+                                          trackBarLength: track.barLength,
+                                        );
+                                    return TrackCard(
+                                      track: track,
+                                      isSelected:
+                                          !track.hasAudio &&
+                                          state.selectedTrackIndex == index,
+                                      visualBarDividers: visualBarDividers,
+                                      playheadProgress: isArmedTrack
+                                          ? 0
+                                          : trackPlayheadProgress,
+                                      isArmed: isArmedTrack,
+                                      armedBlinkOn: provider.armedBlinkOn,
+                                      onDelete: () => provider.deleteTrackAudio(index),
+                                      onToggleDelaySend: () =>
+                                          provider.toggleTrackDelaySend(index),
+                                      onToggleReverbSend: () =>
+                                          provider.toggleTrackReverbSend(index),
+                                      onDelaySendLevelChanged: (level) =>
+                                          provider.setTrackDelaySendLevel(index, level),
+                                      onReverbSendLevelChanged: (level) =>
+                                          provider.setTrackReverbSendLevel(index, level),
+                                      onToggleMute: () => provider.toggleMute(index),
+                                      onBarLengthChanged: (barLength) =>
+                                          provider.setTrackBarLength(index, barLength),
+                                    );
+                                  },
+                                ),
                               ),
-                            );
-                          },
+                            const SizedBox(height: 10),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 4, bottom: 10),
+                              child: Text(
+                                'SONG TRACKS',
+                                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+                            ),
+                            for (int index = 0;
+                                index < provider.songTracks.length;
+                                index++)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: Builder(builder: (context) {
+                                  final st = provider.songTracks[index];
+                                  // Use isArmed/armedBlinkOn to show
+                                  // capturing state on the waveform widget.
+                                  final double songTrackProgress =
+                                      !st.hasAudio
+                                          ? 0.0
+                                          : _trackPlayheadProgress(
+                                              globalProgress:
+                                                  globalPlayheadProgress,
+                                              visualBarDividers:
+                                                  visualBarDividers,
+                                              trackBarLength: st.barLength,
+                                            );
+                                  return TrackCard(
+                                    track: Track(
+                                      id: st.id,
+                                      barLength: visualBarDividers,
+                                      hasAudio: st.hasAudio,
+                                      isMuted: st.isMuted,
+                                      waveformPeaks: st.waveformPeaks,
+                                    ),
+                                    fixedSlotLabel: st.label,
+                                    isSongTrack: true,
+                                    allowDelete: false,
+                                    isSelected: provider.selectedSongTrackId ==
+                                        st.id,
+                                    visualBarDividers: visualBarDividers,
+                                    playheadProgress: st.isCapturing
+                                        ? 0
+                                        : songTrackProgress,
+                                    isArmed: st.isCapturing,
+                                    armedBlinkOn: st.isCapturing &&
+                                        provider.armedBlinkOn,
+                                    onDelete: () {},
+                                    onToggleDelaySend: () {},
+                                    onToggleReverbSend: () {},
+                                    onDelaySendLevelChanged: (_) {},
+                                    onReverbSendLevelChanged: (_) {},
+                                    onToggleMute: () =>
+                                        provider.toggleSongTrackMute(st.id),
+                                    onBarLengthChanged: (_) {},
+                                  );
+                                }),
+                              ),
+                          ],
                         );
                       },
                     ),
@@ -141,6 +218,24 @@ class _LooperScreenState extends State<LooperScreen>
                     transportState: state.transportState,
                     onPlay: provider.playAll,
                     onRecord: provider.startRecordingSession,
+                    onMergePressed: () async {
+                      if (provider.isMergingToSongTrack) return;
+                      final bool started =
+                          await provider.mergeToNextSongTrack();
+                      if (!started && context.mounted) {
+                        final allFull = provider.songTracks
+                            .every((st) => st.hasAudio);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              allFull
+                                  ? 'All song tracks are full.'
+                                  : 'Record some loop tracks first.',
+                            ),
+                          ),
+                        );
+                      }
+                    },
                     onToggleHeadphoneBleed: provider.toggleHeadphoneSafetyMode,
                     headphoneSafetyEnabled: provider.headphoneSafetyEnabled,
                     onClearAll: provider.clearAllTracks,
@@ -155,13 +250,6 @@ class _LooperScreenState extends State<LooperScreen>
                     beatFlash: provider.beatFlash,
                     recordArmed: provider.recordArmed,
                     armedBlinkOn: provider.armedBlinkOn,
-                    onSettingsPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const SettingsScreen(),
-                        ),
-                      );
-                    },
                   ),
                 ],
               ),
@@ -176,21 +264,33 @@ class _LooperScreenState extends State<LooperScreen>
     required LooperState state,
     required int bpm,
     required int visualBarDividers,
+    required int? selectedSongTrackBarLength,
+    required int longestBarLength,
   }) {
     // Only animate the playhead when actually playing or recording, not during count-in
     final bool isPlaying =
         state.transportState == TransportState.playing ||
         state.transportState == TransportState.recording;
+    // Also animate when a song track is soloing (transport may be stopped).
+    final bool songTrackSoloing = selectedSongTrackBarLength != null;
     final bool changedTransport = _lastTransportState != state.transportState;
     final bool changedTempo =
         _lastBpm != bpm || _lastVisualDividers != visualBarDividers;
+    final bool changedSongTrack =
+        _lastSelectedSongTrackBarLength != selectedSongTrackBarLength;
+    // Detect when the native master cycle length changes (a new recording
+    // finished). The native engine resets all tracks to bar 1 at this point,
+    // so we must reset the animation to 0 to stay in sync.
+    final bool changedMasterCycle = _lastLongestBarLength != longestBarLength;
 
     _lastTransportState = state.transportState;
     _lastBpm = bpm;
     _lastVisualDividers = visualBarDividers;
+    _lastSelectedSongTrackBarLength = selectedSongTrackBarLength;
+    _lastLongestBarLength = longestBarLength;
 
-    if (!isPlaying) {
-      if (changedTransport || _playheadController.value != 0) {
+    if (!isPlaying && !songTrackSoloing) {
+      if (changedTransport || changedSongTrack || _playheadController.value != 0) {
         _playheadController
           ..stop()
           ..value = 0;
@@ -198,14 +298,27 @@ class _LooperScreenState extends State<LooperScreen>
       return;
     }
 
-    // Entering recording (or any new transport phase) should start the
-    // playhead from 0 so armed tracks don't paint mid-cycle.
-    if (changedTransport) {
-      _playheadController.value = 0;
-    }
-
-    if (changedTransport || changedTempo || !_playheadController.isAnimating) {
-      _playheadController.repeat(period: _loopPeriod(bpm, visualBarDividers));
+    if (isPlaying) {
+      // Reset to bar 1 whenever the transport starts or the master cycle
+      // length changes (new recording completed). This keeps the playhead
+      // aligned with the native engine, which also resets to bar 1 at those
+      // moments.
+      if (changedTransport || changedMasterCycle) {
+        _playheadController.value = 0;
+      }
+      if (changedTransport || changedTempo || changedMasterCycle ||
+          !_playheadController.isAnimating) {
+        _playheadController.repeat(period: _loopPeriod(bpm, visualBarDividers));
+      }
+    } else {
+      // Song track soloing while transport is stopped: animate at the song
+      // track's own bar length.
+      final Duration soloperiod = _loopPeriod(bpm, selectedSongTrackBarLength!);
+      if (changedSongTrack || !_playheadController.isAnimating) {
+        _playheadController
+          ..value = 0
+          ..repeat(period: soloperiod);
+      }
     }
   }
 

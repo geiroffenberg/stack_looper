@@ -85,11 +85,16 @@ class SettingsScreen extends StatelessWidget {
           title: const Text('How It Works'),
           content: const SingleChildScrollView(
             child: Text(
-              '1) Choose BPM and the number of tracks to capture.\n\n'
-              '2) Arm recording and play the first loop.\n\n'
-              '3) Each track captures one loop and can be mixed individually.\n\n'
-              '4) Use send controls (DLY/REV) and mixer levels to shape your sound.\n\n'
-              '5) Use mute in track view or mixer level control to silence tracks quickly.',
+              'Chain ON:\n'
+              '- Press Record to automatically advance and record the next track in the chain.\n'
+              '- Preset the number of bars per track (each track’s number value).\n'
+              '- "Repeat" sets how many times a track plays before advancing (0 = default).\n'
+              '- "Tracks" sets how many tracks will record in the chain (6 = default).\n\n'
+              'Chain OFF:\n'
+              '- Record one track at a time, manually.\n'
+              '- Each track begins after a four-beat count-in.\n\n'
+              'Recording indicator:\n'
+              '- If the looper is playing, the Record button flashes to show the next track is armed for recording.',
             ),
           ),
           actions: [

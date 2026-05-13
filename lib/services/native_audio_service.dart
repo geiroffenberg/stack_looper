@@ -108,6 +108,42 @@ class NativeAudioService extends AudioService {
     required int bucketCount,
   }) => _engine.trackWaveformPeaks(trackId: trackId, bucketCount: bucketCount);
 
+  // ── Song track capture & playback ────────────────────────────────────────
+  Future<bool> armSongTrackRecording({
+    required int songTrackId,
+    required int startFrame,
+    required int lengthFrames,
+  }) => _engine.armSongTrackRecording(
+    songTrackId: songTrackId,
+    startFrame: startFrame,
+    lengthFrames: lengthFrames,
+  );
+
+  Future<void> startSongTrackPlayback(int songTrackId) =>
+      _engine.startSongTrackPlayback(songTrackId);
+
+  Future<void> stopSongTrackPlayback(int songTrackId) =>
+      _engine.stopSongTrackPlayback(songTrackId);
+
+  Future<void> clearSongTrack(int songTrackId) =>
+      _engine.clearSongTrack(songTrackId);
+
+  Future<List<double>> songTrackWaveformPeaks({
+    required int songTrackId,
+    required int bucketCount,
+  }) => _engine.songTrackWaveformPeaks(
+    songTrackId: songTrackId,
+    bucketCount: bucketCount,
+  );
+
+  Future<bool> renderMixToSongTrack({
+    required int songTrackId,
+    required int loopLengthFrames,
+  }) => _engine.renderMixToSongTrack(
+    songTrackId: songTrackId,
+    loopLengthFrames: loopLengthFrames,
+  );
+
   /// Native beat stream — UI can listen to this for count-in flashes and
   /// playhead animation.
   Stream<int> get beatStream => _engine.beatStream;
@@ -133,8 +169,16 @@ class NativeAudioService extends AudioService {
 
   @override
   Future<void> stopTrackRecording(int trackId) async {
-    // Native recording auto-stops after lengthFrames. This method remains for
-    // API compatibility; there's no premature-stop mechanism yet.
+    // If the native track is still armed or recording (user stopped before
+    // the recording window elapsed), abort it immediately so the engine does
+    // not auto-start playback after Dart has returned to stopped state.
+    // kEmpty=0, kArmed=1, kRecording=2, kRecorded=3
+    final int state = await _engine.trackState(trackId);
+    if (state == 1 || state == 2) {
+      await _engine.clearTrack(trackId);
+      _hasRecording.remove(trackId);
+    }
+    // kRecorded (3): recording completed naturally — leave as-is.
   }
 
   @override
@@ -147,6 +191,11 @@ class NativeAudioService extends AudioService {
   Future<void> stopAll() async {
     for (var i = 0; i < AppConstants.maxTracks; i++) {
       await _engine.stopTrackPlayback(i);
+    }
+    // Stop song track playback too — song tracks should not outlive the
+    // transport stop.
+    for (var i = 0; i < 3; i++) {
+      await _engine.stopSongTrackPlayback(i);
     }
   }
 
