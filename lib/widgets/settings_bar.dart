@@ -14,6 +14,8 @@ class SettingsBar extends StatefulWidget {
     required this.onBpmChanged,
     required this.onRepeatChanged,
     required this.onNumTracksChanged,
+    required this.chainEnabled,
+    required this.onChainChanged,
   });
 
   final int bpm;
@@ -24,6 +26,8 @@ class SettingsBar extends StatefulWidget {
   final ValueChanged<int> onBpmChanged;
   final ValueChanged<int> onRepeatChanged;
   final ValueChanged<int> onNumTracksChanged;
+  final bool chainEnabled;
+  final ValueChanged<bool> onChainChanged;
 
   @override
   State<SettingsBar> createState() => _SettingsBarState();
@@ -97,54 +101,31 @@ class _SettingsBarState extends State<SettingsBar> {
                   children: [
                     _SettingsItem(
                       label: 'BPM',
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _BpmStepperButton(
-                            icon: Icons.remove,
-                            onPressed: _decreaseBpm,
-                          ),
-                          Container(
-                            width: 1,
-                            height: 24,
-                            color: Theme.of(context).dividerColor.withOpacity(0.75),
-                          ),
-                          SizedBox(
-                            width: 64,
-                            child: TextField(
-                              controller: _bpmController,
-                              keyboardType: TextInputType.number,
-                              textAlign: TextAlign.center,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                                LengthLimitingTextInputFormatter(3),
-                              ],
-                              decoration: const InputDecoration(
-                                isDense: true,
-                                filled: false,
-                                fillColor: Colors.transparent,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 10,
-                                ),
-                                enabledBorder: InputBorder.none,
-                                focusedBorder: InputBorder.none,
-                                border: InputBorder.none,
-                              ),
-                              onSubmitted: _submitBpm,
-                              onTapOutside: (_) => _submitBpm(_bpmController.text),
+                      child: SizedBox(
+                        width: 64,
+                        child: TextField(
+                          controller: _bpmController,
+                          keyboardType: TextInputType.number,
+                          textAlign: TextAlign.center,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(3),
+                          ],
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            filled: false,
+                            fillColor: Colors.transparent,
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
                             ),
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                            border: InputBorder.none,
                           ),
-                          Container(
-                            width: 1,
-                            height: 24,
-                            color: Theme.of(context).dividerColor.withOpacity(0.75),
-                          ),
-                          _BpmStepperButton(
-                            icon: Icons.add,
-                            onPressed: _increaseBpm,
-                          ),
-                        ],
+                          onSubmitted: _submitBpm,
+                          onTapOutside: (_) => _submitBpm(_bpmController.text),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -165,6 +146,15 @@ class _SettingsBarState extends State<SettingsBar> {
                         value: widget.numTracksToRecord,
                         options: widget.numTrackOptions,
                         onChanged: widget.onNumTracksChanged,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    _SettingsItem(
+                      label: 'Chain',
+                      framed: true,
+                      child: Switch.adaptive(
+                        value: widget.chainEnabled,
+                        onChanged: widget.onChainChanged,
                       ),
                     ),
                   ],
@@ -264,26 +254,4 @@ class _CompactDropdown extends StatelessWidget {
   }
 }
 
-class _BpmStepperButton extends StatelessWidget {
-  const _BpmStepperButton({
-    required this.icon,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return IconButton(
-      onPressed: onPressed,
-      icon: Icon(icon, size: 18),
-      padding: EdgeInsets.zero,
-      visualDensity: VisualDensity.compact,
-      constraints: const BoxConstraints(
-        minHeight: 32,
-        minWidth: 32,
-      ),
-    );
-  }
-}
+// BPM stepper removed per UI update (manual input only)

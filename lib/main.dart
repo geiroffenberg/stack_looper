@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
-import 'constants/app_theme.dart';
 import 'providers/looper_provider.dart';
+import 'providers/theme_provider.dart';
 import 'screens/looper_screen.dart';
 import 'services/audio_service.dart';
 import 'services/native_audio_service.dart';
@@ -48,12 +47,21 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => LooperProvider(audioService: audioService),
-      child: MaterialApp(
-        title: 'Stack Looper',
-        theme: AppTheme.darkMinimal,
-        home: const LooperScreen(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (_) => LooperProvider(audioService: audioService),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => ThemeProvider(),
+        ),
+      ],
+      child: Consumer<ThemeProvider>(
+        builder: (context, theme, _) => MaterialApp(
+          title: 'Stack Looper',
+          theme: theme.themeData,
+          home: const LooperScreen(),
+        ),
       ),
     );
   }

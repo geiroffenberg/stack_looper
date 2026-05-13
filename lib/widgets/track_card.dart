@@ -382,11 +382,25 @@ class _WaveformPainter extends CustomPainter {
       );
       for (int i = 0; i < count; i++) {
         final double peak = waveformPeaks[i].clamp(0.0, 1.0);
-        final double height = size.height * (0.12 + (peak * 0.76));
+        // Apply a non-linear transform to make low-level detail more visible
+        // while keeping transients prominent. sqrt gives better visual
+        // separation for quieter material than a linear map.
+        final double displayPeak = math.sqrt(peak);
+        final double height = size.height * (0.08 + (displayPeak * 0.86));
         final double top = (size.height - height) * 0.5;
         final double x = i * (barWidth + gap) + (barWidth * 0.5);
         waveformPaint.strokeWidth = barWidth;
         canvas.drawLine(Offset(x, top), Offset(x, top + height), waveformPaint);
+        // Draw a faint outline for better definition on very thin bars.
+        if (barWidth > 2) {
+          final Paint edge = Paint()
+            ..color = waveformColor.withOpacity(0.12)
+            ..strokeWidth = 1
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round;
+          canvas.drawLine(Offset(x - barWidth / 2 + 0.5, top), Offset(x - barWidth / 2 + 0.5, top + height), edge);
+          canvas.drawLine(Offset(x + barWidth / 2 - 0.5, top), Offset(x + barWidth / 2 - 0.5, top + height), edge);
+        }
       }
     }
 

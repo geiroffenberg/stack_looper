@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'dart:math' as math;
 
 import '../constants/app_constants.dart';
 import '../models/looper_state.dart';
@@ -27,7 +28,7 @@ class LooperProvider extends ChangeNotifier {
         selectedTrackIndex: 0,
         bpm: AppConstants.defaultBpm,
         repeatCount: AppConstants.defaultRepeatCount,
-        numTracksToRecord: 1,
+        numTracksToRecord: AppConstants.maxTracks,
         transportState: TransportState.stopped,
       );
 
@@ -52,6 +53,7 @@ class LooperProvider extends ChangeNotifier {
   bool _suppressMetronomeClicks = false;
   int? _playbackAnchorFrame;
   bool _headphoneSafetyEnabled = false;
+  bool _chainEnabled = true;
 
   // Master FX page state.
   bool _fxEnabled = true;
@@ -106,6 +108,7 @@ class LooperProvider extends ChangeNotifier {
   bool get armedBlinkOn => _armedBlinkOn;
   int? get armedTrackId => _armedTrackId;
   bool get headphoneSafetyEnabled => _headphoneSafetyEnabled;
+  bool get chainEnabled => _chainEnabled;
   bool get fxEnabled => _fxEnabled;
   double get fxHighPassHz => _fxHighPassHz;
   double get fxLowPassHz => _fxLowPassHz;
@@ -129,14 +132,9 @@ class LooperProvider extends ChangeNotifier {
       _state.tracks.any((track) => track.barLength == 8) ? 8 : 4;
 
   List<int> get availableNumTracksToRecordOptions {
-    if (_state.hasRecordedTracks) {
-      return const [1];
-    }
     final int empty = _state.emptyTrackCount;
-    if (empty <= 0) {
-      return const [1];
-    }
-    return List<int>.generate(empty, (i) => i + 1);
+    final int max = empty > 0 ? empty : 1;
+    return List<int>.generate(max, (i) => i + 1);
   }
 
   bool get canStartRecording =>
@@ -159,15 +157,14 @@ class LooperProvider extends ChangeNotifier {
   }
 
   void setNumTracksToRecord(int count) {
-    if (_state.hasRecordedTracks) {
-      if (_state.numTracksToRecord != 1) {
-        _state = _state.copyWith(numTracksToRecord: 1);
-        notifyListeners();
-      }
-      return;
-    }
     final int maxSelectable = _maxSelectableTrackCount();
     _state = _state.copyWith(numTracksToRecord: count.clamp(1, maxSelectable));
+    notifyListeners();
+  }
+
+  void setChainEnabled(bool enabled) {
+    if (_chainEnabled == enabled) return;
+    _chainEnabled = enabled;
     notifyListeners();
   }
 
@@ -654,8 +651,9 @@ class LooperProvider extends ChangeNotifier {
     }
 
     // Multi-track chain only applies at the very beginning (all tracks empty,
-    // starting from track 1). Any later additions are single-track recordings.
-    final bool canChain = !_state.hasRecordedTracks && targetStart == 0;
+    // starting from track 1) and when the Chain mode is enabled. Any later
+    // additions are single-track recordings.
+    final bool canChain = _chainEnabled && !_state.hasRecordedTracks && targetStart == 0;
     final int desiredTracks = canChain ? _state.numTracksToRecord : 1;
 
     final targets = _targetTrackIndexes(
@@ -737,10 +735,14 @@ class LooperProvider extends ChangeNotifier {
     );
 
     await native.setTempoBpm(_state.bpm.toDouble());
-    await native.setMetronomeAudible(false);
+    if (_headphoneSafetyEnabled) {
+      await native.setMetronomeAudible(false);
+    }
     _beatSub = native.beatStream.listen(_onNativeBeat);
     await native.startMetronome();
-    await native.setMetronomeAudible(false);
+    if (_headphoneSafetyEnabled) {
+      await native.setMetronomeAudible(false);
+    }
 
     final int msUntilStart = (((startFrame - now) * 1000) / sampleRate)
         .round()
@@ -898,11 +900,13 @@ class LooperProvider extends ChangeNotifier {
       if (_localBeat == 4) {
         // Fourth click just fired. Arm recording on the next downbeat —
         // audio thread will transition to recording/playback on the exact
-        // sample. Mute the metronome NOW so the upcoming recording downbeat
-        // is silent; if we wait until beat 5, that click has already played.
-        // We DON'T flip the UI state here; that would start the playhead a
-        // full beat before the audio downbeat.
-        unawaited(_native?.setMetronomeAudible(false) ?? Future<void>.value());
+        // sample. If headphone-safety is enabled, mute the metronome NOW so
+        // the upcoming recording downbeat is silent; if we wait until beat 5,
+        // that click has already played. We DON'T flip the UI state here; that
+        // would start the playhead a full beat before the audio downbeat.
+        if (_headphoneSafetyEnabled) {
+          unawaited(_native?.setMetronomeAudible(false) ?? Future<void>.value());
+        }
         unawaited(_armRecordingOnNextDownbeat());
       } else if (_localBeat >= 5) {
         // Beat-5 event = the recording downbeat just fired. Flip the UI
@@ -1232,6 +1236,26 @@ class LooperProvider extends ChangeNotifier {
     for (final trackId in finalizedTrackIds) {
       await _audioService.stopTrackRecording(trackId);
       await _refreshTrackWaveform(trackId);
+      // Normalize newly recorded track to target peak level.
+      try {
+        final native = _native;
+        if (native != null) {
+          final peaks = _state.tracks[trackId].waveformPeaks;
+          if (peaks.isNotEmpty) {
+            final double maxPeak = peaks.reduce((a, b) => a > b ? a : b);
+            const double targetPeak = 0.95; // desired peak level (0..1)
+            if (maxPeak > 0.0001) {
+              final double gainFactor = (targetPeak / maxPeak).clamp(0.01, 100.0);
+              final double gainDb = 20.0 * (math.log(gainFactor) / math.ln10);
+              // Clamp to safe range used elsewhere in the app
+              final double clampedDb = gainDb.clamp(_trackMinOutputDb, _trackMaxOutputDb);
+              await native.setTrackOutputGainDb(trackId: trackId, db: clampedDb);
+            }
+          }
+        }
+      } catch (err) {
+        debugPrint('[LooperProvider] normalization failed for track $trackId: $err');
+      }
     }
 
     final List<Track> updatedTracks = _state.tracks

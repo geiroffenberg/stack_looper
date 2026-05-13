@@ -9,6 +9,7 @@ import '../screens/settings_screen.dart';
 import '../widgets/top_menu_bar.dart';
 import '../widgets/settings_bar.dart';
 import '../widgets/track_card.dart';
+import '../widgets/onboarding_dialog.dart';
 
 class LooperScreen extends StatefulWidget {
   const LooperScreen({super.key});
@@ -35,6 +36,10 @@ class _LooperScreenState extends State<LooperScreen>
   void initState() {
     super.initState();
     _playheadController = AnimationController(vsync: this, value: 0);
+    // Show onboarding card once after the first frame if not opted out.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      OnboardingDialog.showIfNeeded(context);
+    });
   }
 
   @override
@@ -70,6 +75,8 @@ class _LooperScreenState extends State<LooperScreen>
                     onBpmChanged: provider.setBpm,
                     onRepeatChanged: provider.setRepeatCount,
                     onNumTracksChanged: provider.setNumTracksToRecord,
+                    chainEnabled: provider.chainEnabled,
+                    onChainChanged: provider.setChainEnabled,
                   ),
                   const SizedBox(height: 8),
                   Expanded(

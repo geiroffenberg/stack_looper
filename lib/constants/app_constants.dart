@@ -5,7 +5,8 @@ class AppConstants {
   static const int defaultBpm = 120;
   static const int minBpm = 60;
   static const int maxBpm = 999;
-  static const int defaultRepeatCount = 1;
+  static const int defaultRepeatCount = 0;
+  // Default number of tracks to record at startup (max tracks)
   static const int defaultBarLength = 4;
 
   static const List<int> bpmValues = [60, 80, 100, 120, 140, 160, 180];

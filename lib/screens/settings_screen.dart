@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../providers/theme_provider.dart';
+import '../constants/app_theme.dart';
+import '../widgets/feature_guide_dialog.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -10,6 +15,14 @@ class SettingsScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
+          _SectionCard(
+            title: 'Appearance',
+            subtitle: 'Choose a color palette for the UI',
+            children: [
+              const _PaletteSelector(),
+            ],
+          ),
+          const SizedBox(height: 10),
           _SectionCard(
             title: 'Project',
             subtitle: 'Save, load, and organize project files.',
@@ -36,44 +49,6 @@ class SettingsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           _SectionCard(
-            title: 'Export',
-            subtitle: 'Render your work for sharing and production.',
-            children: [
-              _ActionRow(
-                icon: Icons.music_note_rounded,
-                title: 'Export Mixdown',
-                subtitle: 'Single bounced file of the full session',
-                onTap: () => _showComingSoon(context, 'Export Mixdown'),
-              ),
-              _ActionRow(
-                icon: Icons.library_music_rounded,
-                title: 'Export Stems',
-                subtitle: 'One file per track for DAW workflows',
-                onTap: () => _showComingSoon(context, 'Export Stems'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _SectionCard(
-            title: 'Pro',
-            subtitle: 'Unlock future premium features from one place.',
-            children: [
-              _ActionRow(
-                icon: Icons.workspace_premium_rounded,
-                title: 'Unlock Pro',
-                subtitle: 'More tracks and advanced workflow tools',
-                onTap: () => _showComingSoon(context, 'Unlock Pro'),
-              ),
-              _ActionRow(
-                icon: Icons.restore_rounded,
-                title: 'Restore Purchases',
-                subtitle: 'Restore previously unlocked entitlements',
-                onTap: () => _showComingSoon(context, 'Restore Purchases'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _SectionCard(
             title: 'Help',
             subtitle: 'Quick guidance for live looping workflow.',
             children: [
@@ -87,7 +62,7 @@ class SettingsScreen extends StatelessWidget {
                 icon: Icons.settings_suggest_rounded,
                 title: 'Feature Guide',
                 subtitle: 'What each button and mode does',
-                onTap: () => _showComingSoon(context, 'Feature Guide'),
+                onTap: () => _showFeatureGuide(context),
               ),
             ],
           ),
@@ -126,6 +101,18 @@ class SettingsScreen extends StatelessWidget {
         );
       },
     );
+  }
+
+  Future<void> _showFeatureGuide(BuildContext context) async {
+    // Defer to the feature guide markdown dialog.
+    // Implemented in lib/widgets/feature_guide_dialog.dart
+    try {
+      // Import here to keep top-level imports tidy and avoid unused warnings
+      // when the guide isn't used in some builds.
+      await FeatureGuideDialog.show(context);
+    } catch (e) {
+      _showComingSoon(context, 'Feature Guide');
+    }
   }
 }
 
@@ -183,6 +170,61 @@ class _ActionRow extends StatelessWidget {
       subtitle: Text(subtitle),
       trailing: const Icon(Icons.chevron_right_rounded),
       onTap: onTap,
+    );
+  }
+}
+
+class _PaletteSelector extends StatelessWidget {
+  const _PaletteSelector();
+
+  @override
+  Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final current = themeProvider.palette;
+
+    return Column(
+      children: AppPalette.values.map((p) {
+        final label = _labelFor(p);
+        return RadioListTile<AppPalette>(
+          value: p,
+          groupValue: current,
+          title: Text(label),
+          secondary: _previewFor(p),
+          onChanged: (v) {
+            if (v != null) themeProvider.setPalette(v);
+          },
+        );
+      }).toList(),
+    );
+  }
+
+  String _labelFor(AppPalette p) {
+    switch (p) {
+      case AppPalette.neonGreen:
+        return 'Neon Green';
+      case AppPalette.neonYellow:
+        return 'Neon Yellow';
+      case AppPalette.neonRed:
+        return 'Neon Red';
+      case AppPalette.light:
+        return 'Light';
+      case AppPalette.neonBlue:
+        return 'Neon Blue';
+    }
+  }
+
+  Widget _previewFor(AppPalette p) {
+    // Small color swatch preview
+    final theme = AppTheme.themeFor(p);
+    final primary = theme.colorScheme.primary;
+    final secondary = theme.colorScheme.secondary;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(width: 18, height: 18, color: primary),
+        const SizedBox(width: 6),
+        Container(width: 18, height: 18, color: secondary),
+      ],
     );
   }
 }
