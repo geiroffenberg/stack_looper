@@ -645,6 +645,9 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
 
     for (auto& t : tracks_) {
       if (!t.playing.load(std::memory_order_acquire)) continue;
+      const auto state = static_cast<TrackState>(
+          t.state.load(std::memory_order_acquire));
+      if (state == TrackState::kRecording) continue;
       const int32_t len = t.length_samples;
       if (len <= 0) continue;  // nothing recorded yet
       const int track_id = static_cast<int>(&t - &tracks_[0]);

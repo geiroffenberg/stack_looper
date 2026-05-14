@@ -566,7 +566,7 @@ class _WaveformPainter extends CustomPainter {
     }
 
     final Paint playheadPaint = Paint()
-      ..color = (isRecording || (isArmed && armedIsRed))
+      ..color = isRecording
           ? const Color(0xFFE53935)
           : playheadColor
       ..strokeWidth = 2;

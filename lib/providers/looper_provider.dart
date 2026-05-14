@@ -44,6 +44,7 @@ class LooperProvider extends ChangeNotifier {
   final Set<int> _activeRecordingTrackIds = <int>{};
   Timer? _recordingTimer;
   Timer? _armStartTimer;
+  final List<Timer> _recordingSequenceUiTimers = <Timer>[];
   Timer? _armedBlinkTimer;
   bool _beatFlash = false;
   bool _recordArmed = false;
@@ -521,6 +522,20 @@ class LooperProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _syncNativeLoopForceMutePolicy() async {
+    final native = _native;
+    if (native == null) return;
+    final bool shouldForceMuteLoops =
+        _selectedSongTrackId != null ||
+        (_headphoneSafetyEnabled && (_recordArmed || _isCaptureInProgress));
+    for (final track in _state.tracks) {
+      await native.setTrackForceMuted(
+        trackId: track.id,
+        muted: shouldForceMuteLoops,
+      );
+    }
+  }
+
   Future<void> clearSongTrackAudio(int songTrackId) async {
     final int nativeIdx = songTrackId - 100;
     if (nativeIdx < 0 || nativeIdx >= 3) return;
@@ -562,15 +577,6 @@ class LooperProvider extends ChangeNotifier {
         .toList(growable: false)
       ..sort();
     return List<int>.unmodifiable(normalized);
-  }
-
-  void _setPrimarySelectedLoopTrack(int index) {
-    if (index < 0 || index >= _state.tracks.length) return;
-    if (!_selectedLoopTrackIds.contains(index)) {
-      _selectedLoopTrackIds = _normalizeSelectedLoopTrackIds(
-        <int>[..._selectedLoopTrackIds, index],
-      );
-    }
   }
 
   void selectTrack(int index) {
@@ -701,6 +707,8 @@ class LooperProvider extends ChangeNotifier {
   Future<void> toggleHeadphoneSafetyMode() async {
     _headphoneSafetyEnabled = !_headphoneSafetyEnabled;
     notifyListeners();
+
+    await _syncNativeLoopForceMutePolicy();
 
     if (_headphoneSafetyEnabled) {
       if (_isCaptureInProgress) {
@@ -1017,6 +1025,7 @@ class LooperProvider extends ChangeNotifier {
     await native?.cancelScheduledSongTrackSwitch();
     _recordArmed = false;
     _armedTrackId = null;
+    await _syncNativeLoopForceMutePolicy();
     await _stopBeatListener();
     _beatFlash = false;
     _localBeat = 0;
@@ -1073,10 +1082,6 @@ class LooperProvider extends ChangeNotifier {
       transportState: TransportState.stopped,
       selectedTrackIndex: _firstEmptyTrackIndex(),
     );
-    final int nextSelected = _firstEmptyTrackIndex();
-    if (nextSelected >= 0) {
-      _setPrimarySelectedLoopTrack(nextSelected);
-    }
     notifyListeners();
   }
 
@@ -1155,7 +1160,6 @@ class LooperProvider extends ChangeNotifier {
       selectedTrackIndex: trackId,
       transportState: TransportState.playing,
     );
-    _setPrimarySelectedLoopTrack(trackId);
     notifyListeners();
 
     final int spb = await native.engine.samplesPerBeat();
@@ -1216,6 +1220,7 @@ class LooperProvider extends ChangeNotifier {
       notifyListeners();
 
       if (_headphoneSafetyEnabled) {
+        unawaited(_syncNativeLoopForceMutePolicy());
         unawaited(_audioService.stopAll());
       }
     });
@@ -1284,6 +1289,7 @@ class LooperProvider extends ChangeNotifier {
 
     int currentStart = firstStartFrame;
     int totalLengthFrames = 0;
+    final List<int> startFrames = <int>[];
     for (int i = 0; i < targets.length; i++) {
       final int trackIndex = targets[i];
       final int barLen = _state.tracks[trackIndex].barLength;
@@ -1293,6 +1299,7 @@ class LooperProvider extends ChangeNotifier {
         startFrame: currentStart,
         lengthFrames: lengthFrames,
       );
+      startFrames.add(currentStart);
       currentStart += lengthFrames;
       totalLengthFrames += lengthFrames;
       if (i < targets.length - 1 && _state.repeatCount > 0) {
@@ -1301,6 +1308,23 @@ class LooperProvider extends ChangeNotifier {
         currentStart += repeatDelayFrames;
         totalLengthFrames += repeatDelayFrames;
       }
+    }
+
+    _recordingSequenceTargets = List<int>.from(targets);
+    _recordingSequenceStartBeats = const <int>[];
+    _recordingSequenceCurrentIdx = 0;
+
+    _clearRecordingSequenceUiTimers();
+    for (int i = 1; i < targets.length; i++) {
+      final int delayMs = (((startFrames[i] - now) * 1000) / sampleRate)
+          .round()
+          .clamp(0, 1 << 30);
+      _recordingSequenceUiTimers.add(
+        Timer(Duration(milliseconds: delayMs), () {
+          if (_state.transportState != TransportState.recording) return;
+          _switchRecordingSequenceUiTarget(i);
+        }),
+      );
     }
 
     await native.setTempoBpm(_state.bpm.toDouble());
@@ -1338,6 +1362,7 @@ class LooperProvider extends ChangeNotifier {
       notifyListeners();
 
       if (_headphoneSafetyEnabled) {
+        unawaited(_syncNativeLoopForceMutePolicy());
         unawaited(_audioService.stopAll());
       }
     });
@@ -1406,6 +1431,7 @@ class LooperProvider extends ChangeNotifier {
   }
 
   void _resetRecordingSequenceState() {
+    _clearRecordingSequenceUiTimers();
     _recordingSequenceTargets = const [];
     _recordingSequenceStartBeats = const [];
     _recordingSequenceCurrentIdx = 0;
@@ -1525,10 +1551,19 @@ class LooperProvider extends ChangeNotifier {
   /// flip the previous target to "looping" and the new target to
   /// "recording". Called on every beat during a sequential recording pass.
   void _advanceRecordingSequenceIfNeeded() {
+    if (_recordingSequenceUiTimers.isNotEmpty) return;
     if (_recordingSequenceTargets.length <= 1) return;
     final int nextIdx = _recordingSequenceCurrentIdx + 1;
     if (nextIdx >= _recordingSequenceTargets.length) return;
     if (_localBeat < _recordingSequenceStartBeats[nextIdx]) return;
+
+    _switchRecordingSequenceUiTarget(nextIdx);
+  }
+
+  void _switchRecordingSequenceUiTarget(int nextIdx) {
+    if (_recordingSequenceTargets.length <= 1) return;
+    if (nextIdx <= _recordingSequenceCurrentIdx) return;
+    if (nextIdx >= _recordingSequenceTargets.length) return;
 
     final int prevId = _recordingSequenceTargets[_recordingSequenceCurrentIdx];
     final int newId = _recordingSequenceTargets[nextIdx];
@@ -1548,12 +1583,18 @@ class LooperProvider extends ChangeNotifier {
         .toList(growable: false);
 
     _state = _state.copyWith(tracks: updated, selectedTrackIndex: newId);
-    _setPrimarySelectedLoopTrack(newId);
     notifyListeners();
 
     if (_headphoneSafetyEnabled && _isCaptureInProgress) {
       unawaited(_audioService.stopAll());
     }
+  }
+
+  void _clearRecordingSequenceUiTimers() {
+    for (final timer in _recordingSequenceUiTimers) {
+      timer.cancel();
+    }
+    _recordingSequenceUiTimers.clear();
   }
 
   void _flipToRecordingState() {
@@ -1575,11 +1616,11 @@ class LooperProvider extends ChangeNotifier {
       selectedTrackIndex: currentId,
       transportState: TransportState.recording,
     );
-    _setPrimarySelectedLoopTrack(currentId);
     notifyListeners();
     _flashBeat();
 
     if (_headphoneSafetyEnabled) {
+      unawaited(_syncNativeLoopForceMutePolicy());
       unawaited(_audioService.stopAll());
     }
 
@@ -1707,10 +1748,6 @@ class LooperProvider extends ChangeNotifier {
     _state = _state.copyWith(
       selectedTrackIndex: _firstEmptyTrackIndex(),
     );
-    final int nextSelected = _firstEmptyTrackIndex();
-    if (nextSelected >= 0) {
-      _setPrimarySelectedLoopTrack(nextSelected);
-    }
     notifyListeners();
   }
 
@@ -1792,7 +1829,6 @@ class LooperProvider extends ChangeNotifier {
       transportState: TransportState.stopped,
       selectedTrackIndex: 0,
     );
-    _setPrimarySelectedLoopTrack(0);
     notifyListeners();
   }
 
@@ -1820,10 +1856,6 @@ class LooperProvider extends ChangeNotifier {
       transportState: TransportState.playing,
       selectedTrackIndex: _firstEmptyTrackIndex(),
     );
-    final int nextSelected = _firstEmptyTrackIndex();
-    if (nextSelected >= 0) {
-      _setPrimarySelectedLoopTrack(nextSelected);
-    }
     notifyListeners();
 
     await _playAudibleTracks(updated, resetAnchor: true);
@@ -1861,10 +1893,6 @@ class LooperProvider extends ChangeNotifier {
             : TransportState.stopped,
         selectedTrackIndex: _firstEmptyTrackIndex(),
       );
-      final int nextSelected = _firstEmptyTrackIndex();
-      if (nextSelected >= 0) {
-        _setPrimarySelectedLoopTrack(nextSelected);
-      }
       notifyListeners();
       return;
     }
@@ -1944,13 +1972,9 @@ class LooperProvider extends ChangeNotifier {
         _selectionAnchorTrackId(actuallyRecordedIds),
       ),
     );
-    final int nextSelected = _nextEmptyTrackIndexAfter(
-      _selectionAnchorTrackId(actuallyRecordedIds),
-    );
-    if (nextSelected >= 0) {
-      _setPrimarySelectedLoopTrack(nextSelected);
-    }
     notifyListeners();
+
+    await _syncNativeLoopForceMutePolicy();
 
     if (continuePlayback) {
       await _playAudibleTracks(updatedTracks, resetAnchor: true);
@@ -1999,10 +2023,10 @@ class LooperProvider extends ChangeNotifier {
     if (!_headphoneSafetyEnabled || !_isCaptureInProgress) {
       return true;
     }
-    // Headphone safety mode: while capturing, only allow tracks explicitly
-    // marked as active recording targets (typically none, because new tracks
-    // are empty and should stay silent to prevent speaker bleed).
-    return _activeRecordingTrackIds.contains(track.id);
+    // Headphone safety mode: while capturing, keep all loop playback silent
+    // so neither previously recorded material nor overwrite targets can leak
+    // from the speaker back into the mic.
+    return false;
   }
 
   Future<void> _refreshTrackWaveform(int trackId) async {

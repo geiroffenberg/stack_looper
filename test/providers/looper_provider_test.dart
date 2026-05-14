@@ -82,4 +82,15 @@ void main() {
     expect(provider.selectedLoopTrackIds, <int>[1, 3]);
     expect(provider.state.selectedTrackIndex, 1);
   });
+
+  test('app state changes do not add loop tracks to user selection', () async {
+    final provider = LooperProvider(audioService: _FakeAudioService());
+
+    provider.selectTrack(1);
+    expect(provider.selectedLoopTrackIds, <int>[0, 1]);
+
+    await provider.clearLoopTracks();
+
+    expect(provider.selectedLoopTrackIds, <int>[0, 1]);
+  });
 }
