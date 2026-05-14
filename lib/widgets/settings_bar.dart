@@ -8,27 +8,21 @@ class SettingsBar extends StatefulWidget {
     super.key,
     required this.bpm,
     required this.repeatCount,
-    required this.numTracksToRecord,
     required this.repeatOptions,
-    required this.numTrackOptions,
     required this.onBpmChanged,
     required this.onRepeatChanged,
-    required this.onNumTracksChanged,
-    required this.chainEnabled,
-    required this.onChainChanged,
+    required this.headphoneSafetyEnabled,
+    required this.onToggleHeadphoneSafety,
     required this.onSettingsPressed,
   });
 
   final int bpm;
   final int repeatCount;
-  final int numTracksToRecord;
   final List<int> repeatOptions;
-  final List<int> numTrackOptions;
   final ValueChanged<int> onBpmChanged;
   final ValueChanged<int> onRepeatChanged;
-  final ValueChanged<int> onNumTracksChanged;
-  final bool chainEnabled;
-  final ValueChanged<bool> onChainChanged;
+  final bool headphoneSafetyEnabled;
+  final VoidCallback onToggleHeadphoneSafety;
   final VoidCallback onSettingsPressed;
 
   @override
@@ -72,6 +66,16 @@ class _SettingsBarState extends State<SettingsBar> {
     widget.onBpmChanged(parsed);
   }
 
+  void _stepBpm(int delta) {
+    final int next = (widget.bpm + delta).clamp(
+      AppConstants.minBpm,
+      AppConstants.maxBpm,
+    );
+    if (next != widget.bpm) {
+      widget.onBpmChanged(next);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -87,31 +91,44 @@ class _SettingsBarState extends State<SettingsBar> {
                   children: [
                     _SettingsItem(
                       label: 'BPM',
-                      child: SizedBox(
-                        width: 54,
-                        child: TextField(
-                          controller: _bpmController,
-                          keyboardType: TextInputType.number,
-                          textAlign: TextAlign.center,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly,
-                            LengthLimitingTextInputFormatter(3),
-                          ],
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            filled: false,
-                            fillColor: Colors.transparent,
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 8,
-                            ),
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            border: InputBorder.none,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _BpmStepButton(
+                            icon: Icons.remove_rounded,
+                            onPressed: () => _stepBpm(-1),
                           ),
-                          onSubmitted: _submitBpm,
-                          onTapOutside: (_) => _submitBpm(_bpmController.text),
-                        ),
+                          SizedBox(
+                            width: 54,
+                            child: TextField(
+                              controller: _bpmController,
+                              keyboardType: TextInputType.number,
+                              textAlign: TextAlign.center,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                                LengthLimitingTextInputFormatter(3),
+                              ],
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                filled: false,
+                                fillColor: Colors.transparent,
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 8,
+                                ),
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                border: InputBorder.none,
+                              ),
+                              onSubmitted: _submitBpm,
+                              onTapOutside: (_) => _submitBpm(_bpmController.text),
+                            ),
+                          ),
+                          _BpmStepButton(
+                            icon: Icons.add_rounded,
+                            onPressed: () => _stepBpm(1),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -126,25 +143,43 @@ class _SettingsBarState extends State<SettingsBar> {
                     ),
                     const SizedBox(width: 8),
                     _SettingsItem(
-                      label: 'Tracks',
+                      label: 'Headphones',
                       framed: true,
-                      child: _CompactDropdown(
-                        value: widget.numTracksToRecord,
-                        options: widget.numTrackOptions,
-                        onChanged: widget.onNumTracksChanged,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    _SettingsItem(
-                      label: 'Chain',
-                      framed: true,
-                      child: Transform.scale(
-                        scale: 0.82,
-                        child: Switch.adaptive(
-                          value: widget.chainEnabled,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          onChanged: widget.onChainChanged,
+                      child: SizedBox(
+                        width: 44,
+                        height: 36,
+                        child: IconButton(
+                          tooltip: 'No headphones',
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                          onPressed: widget.onToggleHeadphoneSafety,
+                          style: IconButton.styleFrom(
+                            foregroundColor: widget.headphoneSafetyEnabled
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).iconTheme.color,
+                            backgroundColor: widget.headphoneSafetyEnabled
+                                ? Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withOpacity(0.14)
+                                : Colors.transparent,
+                            side: BorderSide(
+                              color: widget.headphoneSafetyEnabled
+                                  ? Theme.of(context)
+                                      .colorScheme
+                                      .primary
+                                      .withOpacity(0.6)
+                                  : Colors.transparent,
+                              width: 1,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                          icon: const Icon(
+                            Icons.headset_off_rounded,
+                            size: 20,
+                          ),
                         ),
                       ),
                     ),
@@ -208,6 +243,27 @@ class _SettingsBarState extends State<SettingsBar> {
         else
           child,
       ],
+    );
+  }
+}
+
+class _BpmStepButton extends StatelessWidget {
+  const _BpmStepButton({required this.icon, required this.onPressed});
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 28,
+      height: 28,
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        onPressed: onPressed,
+        icon: Icon(icon, size: 16),
+      ),
     );
   }
 }

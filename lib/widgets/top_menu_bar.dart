@@ -9,8 +9,6 @@ class TopMenuBar extends StatelessWidget {
     required this.onPlay,
     required this.onRecord,
     required this.onMergePressed,
-    required this.onToggleHeadphoneBleed,
-    required this.headphoneSafetyEnabled,
     required this.onClearAll,
     required this.onFxPressed,
     required this.canRecord,
@@ -23,8 +21,6 @@ class TopMenuBar extends StatelessWidget {
   final VoidCallback onPlay;
   final VoidCallback onRecord;
   final VoidCallback onMergePressed;
-  final VoidCallback onToggleHeadphoneBleed;
-  final bool headphoneSafetyEnabled;
   final VoidCallback onClearAll;
   final VoidCallback onFxPressed;
   final bool canRecord;
@@ -92,16 +88,6 @@ class TopMenuBar extends StatelessWidget {
               borderColor: borderColor,
               child: Row(
                 children: [
-                  Expanded(
-                    child: _MenuActionButton(
-                      icon: Icons.headset_off_rounded,
-                      tooltip: 'No headphones',
-                      onPressed: onToggleHeadphoneBleed,
-                      isActive: headphoneSafetyEnabled,
-                      activeColor: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
                   Expanded(
                     child: _MenuActionButton(
                       icon: Icons.delete_sweep_rounded,
@@ -256,15 +242,11 @@ class _MenuActionButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onPressed,
-    this.isActive = false,
-    this.activeColor,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback onPressed;
-  final bool isActive;
-  final Color? activeColor;
 
   @override
   Widget build(BuildContext context) {
@@ -273,23 +255,14 @@ class _MenuActionButton extends StatelessWidget {
       onPressed: onPressed,
       style: IconButton.styleFrom(
         minimumSize: const Size.fromHeight(44),
-        backgroundColor: isActive
-            ? (activeColor ?? Theme.of(context).colorScheme.primary)
-                .withOpacity(0.25)
-            : Theme.of(context).colorScheme.surface.withOpacity(0.35),
+        backgroundColor:
+            Theme.of(context).colorScheme.surface.withOpacity(0.35),
         side: BorderSide(
-          color: isActive
-              ? (activeColor ?? Theme.of(context).colorScheme.primary)
-                  .withOpacity(0.75)
-              : Theme.of(context).dividerColor.withOpacity(0.85),
+          color: Theme.of(context).dividerColor.withOpacity(0.85),
           width: 1,
         ),
       ),
-      icon: Icon(
-        icon,
-        size: 20,
-        color: isActive ? (activeColor ?? Theme.of(context).colorScheme.primary) : null,
-      ),
+      icon: Icon(icon, size: 20),
     );
   }
 }

@@ -21,6 +21,7 @@ class TrackCard extends StatelessWidget {
     required this.onReverbSendLevelChanged,
     required this.onToggleMute,
     required this.onBarLengthChanged,
+    this.onTap,
     this.fixedSlotLabel,
     this.isSongTrack = false,
     this.allowDelete = true,
@@ -40,6 +41,7 @@ class TrackCard extends StatelessWidget {
   final ValueChanged<double> onReverbSendLevelChanged;
   final VoidCallback onToggleMute;
   final ValueChanged<int> onBarLengthChanged;
+  final VoidCallback? onTap;
   final String? fixedSlotLabel;
   final bool isSongTrack;
   final bool allowDelete;
@@ -55,14 +57,16 @@ class TrackCard extends StatelessWidget {
     final Color _inactiveBorderColor = isSongTrack
         ? Theme.of(context).colorScheme.secondary.withOpacity(0.52)
         : Theme.of(context).dividerColor.withOpacity(0.72);
-    final Color borderColor = isSelected
-        ? selectedBorderColor
+    final bool armedForDeselect = isSongTrack && isArmed && !armedIsRed;
+    final bool armedForSolo = isSongTrack && isArmed && armedIsRed;
+    final Color borderColor = armedForDeselect
+      ? (armedBlinkOn
+        ? _inactiveBorderColor
+        : _inactiveBorderColor.withOpacity(0.25))
+      : isSelected
+      ? selectedBorderColor
         : isSongTrack && isArmed && armedIsRed
         ? (armedBlinkOn ? _armedRedColor : _inactiveBorderColor)
-        : isSongTrack && isArmed && !armedIsRed
-        ? (armedBlinkOn
-            ? _inactiveBorderColor.withOpacity(0.65)
-            : _inactiveBorderColor.withOpacity(0.25))
         : _inactiveBorderColor;
     final Color cardColor = isSongTrack
         ? Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.42)
@@ -129,7 +133,18 @@ class TrackCard extends StatelessWidget {
                         .colorScheme
                         .onSurface
                         .withOpacity(0.30);
-                    if (isSelected) {
+                    if (armedForDeselect) {
+                      // Armed for deselect — blink grey even though the track
+                      // is still currently selected.
+                      return Text('S',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: armedBlinkOn
+                                  ? inactiveGrey.withOpacity(0.85)
+                                  : inactiveGrey.withOpacity(0.25)));
+                    } else if (isSelected) {
                       // Currently soloing — solid red.
                       return Text('S',
                           style: TextStyle(
@@ -137,7 +152,7 @@ class TrackCard extends StatelessWidget {
                               fontWeight: FontWeight.w800,
                               letterSpacing: 0.5,
                               color: activeRed));
-                    } else if (isArmed && armedIsRed) {
+                    } else if (armedForSolo) {
                       // Armed for solo — blink red.
                       return Text('S',
                           style: TextStyle(
@@ -145,16 +160,6 @@ class TrackCard extends StatelessWidget {
                               fontWeight: FontWeight.w800,
                               letterSpacing: 0.5,
                               color: armedBlinkOn ? activeRed : inactiveGrey));
-                    } else if (isArmed && !armedIsRed) {
-                      // Armed for deselect — blink grey.
-                      return Text('S',
-                          style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.5,
-                              color: armedBlinkOn
-                                  ? inactiveGrey.withOpacity(0.65)
-                                  : inactiveGrey.withOpacity(0.20)));
                     } else {
                       // Idle — grey.
                       return Text('S',
@@ -245,6 +250,7 @@ class TrackCard extends StatelessWidget {
     }
 
     return GestureDetector(
+      onTap: onTap,
       onLongPress: allowDelete ? onDelete : null,
       child: cardContainer,
     );
@@ -567,12 +573,10 @@ class _WaveformPainter extends CustomPainter {
     final double clampedProgress = playheadProgress.clamp(0.0, 1.0).toDouble();
     final double playheadX = size.width * clampedProgress;
 
-    // Only draw playhead if track has audio or is currently recording
-    if (isArmed) {
-      if (armedBlinkOn) {
-        canvas.drawLine(Offset(0, 0), Offset(0, size.height), playheadPaint);
-      }
-    } else if (hasAudio || isRecording) {
+    // Always draw the moving playhead for any track with content while the
+    // transport is running. Armed state only changes the colour; it must not
+    // pin the playhead to x=0 or hide it on song tracks.
+    if (hasAudio || isRecording) {
       canvas.drawLine(
         Offset(playheadX, 0),
         Offset(playheadX, size.height),

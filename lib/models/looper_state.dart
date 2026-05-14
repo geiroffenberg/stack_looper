@@ -8,7 +8,6 @@ class LooperState {
     required this.selectedTrackIndex,
     required this.bpm,
     required this.repeatCount,
-    required this.numTracksToRecord,
     required this.transportState,
   });
 
@@ -16,7 +15,6 @@ class LooperState {
   final int selectedTrackIndex;
   final int bpm;
   final int repeatCount;
-  final int numTracksToRecord;
   final TransportState transportState;
 
   int get emptyTrackCount => tracks.where((track) => !track.hasAudio).length;
@@ -27,7 +25,6 @@ class LooperState {
     int? selectedTrackIndex,
     int? bpm,
     int? repeatCount,
-    int? numTracksToRecord,
     TransportState? transportState,
   }) {
     return LooperState(
@@ -35,7 +32,6 @@ class LooperState {
       selectedTrackIndex: selectedTrackIndex ?? this.selectedTrackIndex,
       bpm: bpm ?? this.bpm,
       repeatCount: repeatCount ?? this.repeatCount,
-      numTracksToRecord: numTracksToRecord ?? this.numTracksToRecord,
       transportState: transportState ?? this.transportState,
     );
   }

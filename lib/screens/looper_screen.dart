@@ -76,14 +76,12 @@ class _LooperScreenState extends State<LooperScreen>
                   SettingsBar(
                     bpm: state.bpm,
                     repeatCount: state.repeatCount,
-                    numTracksToRecord: state.numTracksToRecord,
                     repeatOptions: AppConstants.repeatValues,
-                    numTrackOptions: provider.availableNumTracksToRecordOptions,
                     onBpmChanged: provider.setBpm,
                     onRepeatChanged: provider.setRepeatCount,
-                    onNumTracksChanged: provider.setNumTracksToRecord,
-                    chainEnabled: provider.chainEnabled,
-                    onChainChanged: provider.setChainEnabled,
+                    headphoneSafetyEnabled: provider.headphoneSafetyEnabled,
+                    onToggleHeadphoneSafety:
+                        provider.toggleHeadphoneSafetyMode,
                     onSettingsPressed: () {
                       Navigator.of(context).push(
                         MaterialPageRoute<void>(
@@ -123,15 +121,12 @@ class _LooperScreenState extends State<LooperScreen>
                                         );
                                     return TrackCard(
                                       track: track,
-                                      isSelected:
-                                          !track.hasAudio &&
-                                          state.selectedTrackIndex == index,
+                                      isSelected: provider.selectedLoopTrackIds.contains(index),
                                       visualBarDividers: visualBarDividers,
-                                      playheadProgress: isArmedTrack
-                                          ? 0
-                                          : trackPlayheadProgress,
+                                      playheadProgress: trackPlayheadProgress,
                                       isArmed: isArmedTrack,
                                       armedBlinkOn: provider.armedBlinkOn,
+                                      onTap: () => provider.selectTrack(index),
                                       onDelete: () => provider.deleteTrackAudio(index),
                                       onToggleDelaySend: () =>
                                           provider.toggleTrackDelaySend(index),
@@ -192,9 +187,7 @@ class _LooperScreenState extends State<LooperScreen>
                                     isSelected: provider.selectedSongTrackId ==
                                         st.id,
                                     visualBarDividers: visualBarDividers,
-                                    playheadProgress: st.isCapturing
-                                        ? 0
-                                        : songTrackProgress,
+                                    playheadProgress: songTrackProgress,
                                     isArmed: st.isCapturing ||
                                         st.isArmedForSolo ||
                                         st.isArmedForDeselect,
@@ -243,8 +236,6 @@ class _LooperScreenState extends State<LooperScreen>
                         );
                       }
                     },
-                    onToggleHeadphoneBleed: provider.toggleHeadphoneSafetyMode,
-                    headphoneSafetyEnabled: provider.headphoneSafetyEnabled,
                     onClearAll: provider.clearLoopTracks,
                     onFxPressed: () {
                       Navigator.of(context).push(

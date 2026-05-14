@@ -68,4 +68,18 @@ void main() {
     provider.setTrackBarLength(0, 8);
     expect(provider.visualBarDividers, 8);
   });
+
+  test('selected loop tracks stay ordered from top to bottom', () {
+    final provider = LooperProvider(audioService: _FakeAudioService());
+
+    provider.selectTrack(3);
+    provider.selectTrack(1);
+
+    expect(provider.selectedLoopTrackIds, <int>[0, 1, 3]);
+
+    provider.selectTrack(0);
+
+    expect(provider.selectedLoopTrackIds, <int>[1, 3]);
+    expect(provider.state.selectedTrackIndex, 1);
+  });
 }
