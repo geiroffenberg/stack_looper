@@ -9,6 +9,8 @@ class SongTrack {
     this.hasAudio = false,
     this.isMuted = true,
     this.isCapturing = false,
+    this.isArmedForSolo = false,
+    this.isArmedForDeselect = false,
     this.waveformPeaks = const <double>[],
     this.barLength = 1,
   });
@@ -19,6 +21,10 @@ class SongTrack {
   final bool hasAudio;
   final bool isMuted;
   final bool isCapturing;
+  /// True when the track is staged to become the solo track at next downbeat.
+  final bool isArmedForSolo;
+  /// True when the currently-playing solo track is staged to deselect at next downbeat.
+  final bool isArmedForDeselect;
   final List<double> waveformPeaks;
   final int barLength;
 
@@ -28,6 +34,8 @@ class SongTrack {
     bool? hasAudio,
     bool? isMuted,
     bool? isCapturing,
+    bool? isArmedForSolo,
+    bool? isArmedForDeselect,
     List<double>? waveformPeaks,
     int? barLength,
   }) {
@@ -37,6 +45,8 @@ class SongTrack {
       hasAudio: hasAudio ?? this.hasAudio,
       isMuted: isMuted ?? this.isMuted,
       isCapturing: isCapturing ?? this.isCapturing,
+      isArmedForSolo: isArmedForSolo ?? this.isArmedForSolo,
+      isArmedForDeselect: isArmedForDeselect ?? this.isArmedForDeselect,
       waveformPeaks: waveformPeaks ?? this.waveformPeaks,
       barLength: barLength ?? this.barLength,
     );

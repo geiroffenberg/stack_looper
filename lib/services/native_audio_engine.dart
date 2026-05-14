@@ -157,6 +157,20 @@ class NativeAudioEngine {
   Future<void> clearTrack(int trackId) =>
       _channel.invokeMethod<void>('clearTrack', trackId);
 
+  Future<void> setTrackForceMuted({
+    required int trackId,
+    required bool muted,
+  }) async {
+    try {
+      await _channel.invokeMethod<void>('setTrackForceMuted', {
+        'trackId': trackId,
+        'muted': muted,
+      });
+    } on MissingPluginException {
+      debugPrint('[NativeAudioEngine] setTrackForceMuted unavailable');
+    }
+  }
+
   // ── Song tracks (A / B / C) ─────────────────────────────────────────────
   // Song tracks capture the fully-processed master output (post-FX, post-
   // limiter) for exactly one full loop length. Native IDs are 0, 1, 2.
@@ -178,6 +192,28 @@ class NativeAudioEngine {
     } on MissingPluginException {
       debugPrint('[NativeAudioEngine] armSongTrackRecording unavailable');
       return false;
+    }
+  }
+
+  Future<void> scheduleSongTrackSwitch({
+    required int songTrackId,
+    required int startFrame,
+  }) async {
+    try {
+      await _channel.invokeMethod<void>('scheduleSongTrackSwitch', {
+        'songTrackId': songTrackId,
+        'startFrame': startFrame,
+      });
+    } on MissingPluginException {
+      debugPrint('[NativeAudioEngine] scheduleSongTrackSwitch unavailable');
+    }
+  }
+
+  Future<void> cancelScheduledSongTrackSwitch() async {
+    try {
+      await _channel.invokeMethod<void>('cancelScheduledSongTrackSwitch');
+    } on MissingPluginException {
+      debugPrint('[NativeAudioEngine] cancelScheduledSongTrackSwitch unavailable');
     }
   }
 

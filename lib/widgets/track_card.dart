@@ -24,6 +24,7 @@ class TrackCard extends StatelessWidget {
     this.fixedSlotLabel,
     this.isSongTrack = false,
     this.allowDelete = true,
+    this.armedIsRed = true,
   });
 
   final Track track;
@@ -42,71 +43,130 @@ class TrackCard extends StatelessWidget {
   final String? fixedSlotLabel;
   final bool isSongTrack;
   final bool allowDelete;
+  /// When [isArmed] is true, controls whether the blink colour is red (true,
+  /// default) or the track's normal playhead colour (false, used for
+  /// armed-for-deselect on song tracks).
+  final bool armedIsRed;
 
   @override
   Widget build(BuildContext context) {
     final Color selectedBorderColor = const Color(0xFF7DD3FC);
-    final Color borderColor = isSelected
-        ? selectedBorderColor
-        : isSongTrack
+    final Color _armedRedColor = const Color(0xFFE53935);
+    final Color _inactiveBorderColor = isSongTrack
         ? Theme.of(context).colorScheme.secondary.withOpacity(0.52)
         : Theme.of(context).dividerColor.withOpacity(0.72);
+    final Color borderColor = isSelected
+        ? selectedBorderColor
+        : isSongTrack && isArmed && armedIsRed
+        ? (armedBlinkOn ? _armedRedColor : _inactiveBorderColor)
+        : isSongTrack && isArmed && !armedIsRed
+        ? (armedBlinkOn
+            ? _inactiveBorderColor.withOpacity(0.65)
+            : _inactiveBorderColor.withOpacity(0.25))
+        : _inactiveBorderColor;
     final Color cardColor = isSongTrack
         ? Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.42)
         : Theme.of(context).cardTheme.color ?? Theme.of(context).cardColor;
 
-    return GestureDetector(
-      onLongPress: allowDelete ? onDelete : null,
-      child: Container(
-        height: 92,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: borderColor, width: isSelected ? 2 : 1.5),
-          color: cardColor,
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: selectedBorderColor.withOpacity(0.18),
-                    blurRadius: 14,
-                    spreadRadius: 0.5,
-                  ),
-                ]
-              : null,
-        ),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                fixedSlotLabel != null
-                    ? _SongTrackSlot(label: fixedSlotLabel!)
-                    : SizedBox(
-                        width: 72,
-                        child: DropdownButtonFormField<int>(
-                          isDense: true,
-                          initialValue: track.barLength,
-                          decoration: const InputDecoration(
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 6,
-                            ),
+    final Widget cardContainer = Container(
+      height: 92,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor, width: isSelected ? 2 : 1.5),
+        color: cardColor,
+        boxShadow: isSelected
+            ? [
+                BoxShadow(
+                  color: selectedBorderColor.withOpacity(0.18),
+                  blurRadius: 14,
+                  spreadRadius: 0.5,
+                ),
+              ]
+            : null,
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              fixedSlotLabel != null
+                  ? _SongTrackSlot(label: fixedSlotLabel!)
+                  : SizedBox(
+                      width: 72,
+                      child: DropdownButtonFormField<int>(
+                        isDense: true,
+                        initialValue: track.barLength,
+                        decoration: const InputDecoration(
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 6,
                           ),
-                          items: AppConstants.barLengthValues
-                              .map(
-                                (value) => DropdownMenuItem<int>(
-                                  value: value,
-                                  child: Text('$value'),
-                                ),
-                              )
-                              .toList(growable: false),
-                          onChanged: (updated) {
-                            if (updated != null) {
-                              onBarLengthChanged(updated);
-                            }
-                          },
                         ),
+                        items: AppConstants.barLengthValues
+                            .map(
+                              (value) => DropdownMenuItem<int>(
+                                value: value,
+                                child: Text('$value'),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (updated) {
+                          if (updated != null) {
+                            onBarLengthChanged(updated);
+                          }
+                        },
                       ),
-                const Spacer(),
+                    ),
+              const Spacer(),
+              if (isSongTrack) ...[
+                // Solo indicator: red = playing solo; blinking red = armed for
+                // solo; blinking grey = armed to deselect; grey = inactive.
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Builder(builder: (context) {
+                    final Color activeRed = const Color(0xFFE53935);
+                    final Color inactiveGrey = Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withOpacity(0.30);
+                    if (isSelected) {
+                      // Currently soloing — solid red.
+                      return Text('S',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: activeRed));
+                    } else if (isArmed && armedIsRed) {
+                      // Armed for solo — blink red.
+                      return Text('S',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: armedBlinkOn ? activeRed : inactiveGrey));
+                    } else if (isArmed && !armedIsRed) {
+                      // Armed for deselect — blink grey.
+                      return Text('S',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: armedBlinkOn
+                                  ? inactiveGrey.withOpacity(0.65)
+                                  : inactiveGrey.withOpacity(0.20)));
+                    } else {
+                      // Idle — grey.
+                      return Text('S',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: inactiveGrey));
+                    }
+                  }),
+                ),
+              ] else ...[
                 _TrackHeaderToggle(
                   tooltip: 'Delay send',
                   label: 'DLY',
@@ -146,7 +206,8 @@ class TrackCard extends StatelessWidget {
                   ),
                 ),
               ],
-            ),
+            ],
+          ),
             const SizedBox(height: 8),
             Expanded(
               child: ClipRRect(
@@ -157,6 +218,7 @@ class TrackCard extends StatelessWidget {
                     isRecording: track.state == TrackState.recording,
                     isArmed: isArmed,
                     armedBlinkOn: armedBlinkOn,
+                    armedIsRed: armedIsRed,
                     waveformPeaks: track.waveformPeaks,
                     visualBarDividers: visualBarDividers,
                     trackBarLength: track.barLength,
@@ -171,7 +233,20 @@ class TrackCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
+      );
+
+    if (isSongTrack) {
+      // Whole card is the tap target. Long-press deletes the song track audio.
+      return GestureDetector(
+        onTap: track.hasAudio ? onToggleMute : null,
+        onLongPress: allowDelete ? onDelete : null,
+        child: cardContainer,
+      );
+    }
+
+    return GestureDetector(
+      onLongPress: allowDelete ? onDelete : null,
+      child: cardContainer,
     );
   }
 
@@ -374,6 +449,7 @@ class _WaveformPainter extends CustomPainter {
     required this.isRecording,
     required this.isArmed,
     required this.armedBlinkOn,
+    required this.armedIsRed,
     required this.waveformPeaks,
     required this.visualBarDividers,
     required this.trackBarLength,
@@ -387,6 +463,8 @@ class _WaveformPainter extends CustomPainter {
   final bool isRecording;
   final bool isArmed;
   final bool armedBlinkOn;
+  /// When true the armed blink line is red; when false it uses [playheadColor].
+  final bool armedIsRed;
   final List<double> waveformPeaks;
   final int visualBarDividers;
   final int trackBarLength;
@@ -482,7 +560,7 @@ class _WaveformPainter extends CustomPainter {
     }
 
     final Paint playheadPaint = Paint()
-      ..color = (isRecording || isArmed)
+      ..color = (isRecording || (isArmed && armedIsRed))
           ? const Color(0xFFE53935)
           : playheadColor
       ..strokeWidth = 2;
@@ -509,6 +587,7 @@ class _WaveformPainter extends CustomPainter {
         oldDelegate.isRecording != isRecording ||
         oldDelegate.isArmed != isArmed ||
         oldDelegate.armedBlinkOn != armedBlinkOn ||
+        oldDelegate.armedIsRed != armedIsRed ||
         oldDelegate.waveformPeaks != waveformPeaks ||
         oldDelegate.visualBarDividers != visualBarDividers ||
         oldDelegate.trackBarLength != trackBarLength ||

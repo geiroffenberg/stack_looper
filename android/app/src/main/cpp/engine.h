@@ -144,6 +144,7 @@ class Engine : public oboe::AudioStreamDataCallback,
   float LimiterCeilingDb() const;
   void SetTrackOutputGainDb(int32_t track_id, float db);
   float TrackOutputGainDb(int32_t track_id) const;
+  void SetTrackForceMuted(int32_t track_id, bool muted);
   void SetTrackDelaySendLevel(int32_t track_id, float level);
   float TrackDelaySendLevel(int32_t track_id) const;
   void SetTrackReverbSendLevel(int32_t track_id, float level);
@@ -246,6 +247,9 @@ class Engine : public oboe::AudioStreamDataCallback,
   // completion. Returns false on invalid arguments.
   bool RenderMixToSongTrack(int32_t song_track_id,
                             int32_t loop_length_frames);
+  void ScheduleSongTrackSwitch(int32_t song_track_id,
+                               int64_t start_frame);
+  void CancelScheduledSongTrackSwitch();
   void StartSongTrackPlayback(int32_t song_track_id);
   void StopSongTrackPlayback(int32_t song_track_id);
   void ClearSongTrack(int32_t song_track_id);
@@ -314,6 +318,7 @@ class Engine : public oboe::AudioStreamDataCallback,
   // Per-track output gains (target + smoothed) for mixer-style volume strips.
   std::array<std::atomic<float>, kMaxTracks> track_output_gain_target_{};
   std::array<float, kMaxTracks> track_output_gain_smoothed_{};
+  std::array<std::atomic<bool>, kMaxTracks> track_force_muted_{};
   std::array<std::atomic<float>, kMaxTracks> track_delay_send_level_{};
   std::array<std::atomic<float>, kMaxTracks> track_reverb_send_level_{};
   // Master limiter ceiling in linear gain. Default is -1.0 dBFS.
@@ -355,6 +360,9 @@ class Engine : public oboe::AudioStreamDataCallback,
   // real sample rate. Atomic state lets the control thread observe progress
   // without locking.
   std::array<Track, kMaxTracks> tracks_{};
+  std::atomic<bool> pending_song_switch_active_{false};
+  std::atomic<int32_t> pending_song_switch_target_{-1};
+  std::atomic<int64_t> pending_song_switch_frame_{0};
 
   // Song tracks: capture master output (post-FX). Allocated on Start().
   std::array<SongTrack, kMaxSongTracks> song_tracks_{};

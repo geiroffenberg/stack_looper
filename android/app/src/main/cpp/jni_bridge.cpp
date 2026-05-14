@@ -370,6 +370,13 @@ Java_com_example_stack_1looper_StackLooperAudio_nativeClearTrack(
   stack_looper::GetGlobalEngine().ClearTrack(static_cast<int32_t>(track_id));
 }
 
+JNIEXPORT void JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeSetTrackForceMuted(
+    JNIEnv* /*env*/, jclass /*clazz*/, jint track_id, jboolean muted) {
+  stack_looper::GetGlobalEngine().SetTrackForceMuted(
+      static_cast<int32_t>(track_id), muted == JNI_TRUE);
+}
+
 // ── Song track JNI ─────────────────────────────────────────────────────────
 
 JNIEXPORT jboolean JNICALL
@@ -381,6 +388,20 @@ Java_com_example_stack_1looper_StackLooperAudio_nativeArmSongTrackRecording(
              static_cast<int64_t>(start_frame),
              static_cast<int32_t>(length_frames))
              ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeScheduleSongTrackSwitch(
+    JNIEnv* /*env*/, jclass /*clazz*/, jint song_track_id, jlong start_frame) {
+  stack_looper::GetGlobalEngine().ScheduleSongTrackSwitch(
+      static_cast<int32_t>(song_track_id),
+      static_cast<int64_t>(start_frame));
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_stack_1looper_StackLooperAudio_nativeCancelScheduledSongTrackSwitch(
+    JNIEnv* /*env*/, jclass /*clazz*/) {
+  stack_looper::GetGlobalEngine().CancelScheduledSongTrackSwitch();
 }
 
 JNIEXPORT void JNICALL

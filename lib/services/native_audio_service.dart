@@ -93,6 +93,11 @@ class NativeAudioService extends AudioService {
     required double db,
   }) => _engine.setTrackOutputGainDb(trackId: trackId, db: db);
 
+  Future<void> setTrackForceMuted({
+    required int trackId,
+    required bool muted,
+  }) => _engine.setTrackForceMuted(trackId: trackId, muted: muted);
+
   Future<void> setTrackDelaySendLevel({
     required int trackId,
     required double level,
@@ -121,6 +126,17 @@ class NativeAudioService extends AudioService {
 
   Future<void> startSongTrackPlayback(int songTrackId) =>
       _engine.startSongTrackPlayback(songTrackId);
+
+  Future<void> scheduleSongTrackSwitch({
+    required int songTrackId,
+    required int startFrame,
+  }) => _engine.scheduleSongTrackSwitch(
+    songTrackId: songTrackId,
+    startFrame: startFrame,
+  );
+
+  Future<void> cancelScheduledSongTrackSwitch() =>
+      _engine.cancelScheduledSongTrackSwitch();
 
   Future<void> stopSongTrackPlayback(int songTrackId) =>
       _engine.stopSongTrackPlayback(songTrackId);

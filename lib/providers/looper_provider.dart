@@ -63,7 +63,16 @@ class LooperProvider extends ChangeNotifier {
   ]);
   int? _activeSongTrackId;
   int? _selectedSongTrackId; // song track currently in exclusive solo mode
+  // Pending quantized song track change (committed at next master loop downbeat).
+  // _pendingSongTrackChange == true means a change is staged.
+  // _pendingSongTrackId == null means "restore to loop tracks"; a specific id
+  // means "switch solo to that track".
+  bool _pendingSongTrackChange = false;
+  int? _pendingSongTrackId;
+  Timer? _songTrackDownbeatTimer; // fires at each master loop restart during playback
   List<bool>? _savedLoopMuteStates; // loop track mutes saved before entering solo
+  int _songTrackScheduleToken = 0;
+  bool _pendingSongTrackScheduledNatively = false;
 
   // Master FX page state.
   bool _fxEnabled = true;
@@ -263,88 +272,266 @@ class LooperProvider extends ChangeNotifier {
     return true;
   }
 
-  /// Tap a song track to enter exclusive solo mode; tap it again to exit.
-  ///
-  /// While a song track is selected:
-  ///  - All 6 loop tracks are silenced (their previous mute state is saved).
-  ///  - All other song tracks are stopped.
-  ///  - The tapped song track plays solo.
-  /// Tapping the same song track again restores loop tracks to their saved
-  /// mute state and stops the song track.
+  // ---------------------------------------------------------------------------
+  // Song track solo logic
+  //
+  // States:
+  //   _selectedSongTrackId  — the track currently playing solo (or null)
+  //   _pendingSongTrackChange — a quantized change is staged for loop restart
+  //   _pendingSongTrackId   — the target at loop restart:
+  //                             a real id  → switch to / enter that solo
+  //                             null       → exit solo, restore 6 tracks
+  //   _savedLoopMuteStates  — loop track mutes saved on first solo entry;
+  //                           held until solo is fully exited
+  // ---------------------------------------------------------------------------
+
   void toggleSongTrackMute(int songTrackId) {
     final int nativeIdx = songTrackId - 100;
     if (nativeIdx < 0 || nativeIdx >= _songTracks.length) return;
-    final st = _songTracks[nativeIdx];
-    if (!st.hasAudio) return;
+    if (!_songTracks[nativeIdx].hasAudio) return;
 
-    if (_selectedSongTrackId == songTrackId) {
-      // --- Deselect: stop song track, restore loop tracks. ---
-      _selectedSongTrackId = null;
-      unawaited(_native?.stopSongTrackPlayback(nativeIdx));
-      // Mark song track as muted.
-      final List<SongTrack> updatedSong = List<SongTrack>.from(_songTracks);
-      updatedSong[nativeIdx] = st.copyWith(isMuted: true);
-      _songTracks = List<SongTrack>.unmodifiable(updatedSong);
-      // Restore loop tracks (also calls notifyListeners).
-      _restoreLoopMutesAfterSongTrackDeselect();
-    } else {
-      // --- Select: save loop mute states, silence loop tracks, solo this. ---
-      // Save current mute state of every loop track.
-      _savedLoopMuteStates = _state.tracks.map((t) => t.isMuted).toList();
+    final bool isPlaying =
+        _state.transportState == TransportState.playing ||
+        _state.transportState == TransportState.recording;
 
-      // Force-mute any loop track that is currently playing.
-      final List<Track> forceMuted = List<Track>.from(_state.tracks);
-      for (int i = 0; i < forceMuted.length; i++) {
-        final track = forceMuted[i];
-        if (!track.isMuted) {
-          _preMuteTrackOutputDb[track.id] = _fxTrackOutputDb[track.id];
-          _fxTrackOutputDb[track.id] = _trackMinOutputDb;
-          unawaited(
-            _native?.setTrackOutputGainDb(
-              trackId: track.id,
-              db: _trackMinOutputDb,
-            ),
-          );
-          forceMuted[i] = track.copyWith(isMuted: true);
-        }
+    if (!isPlaying) {
+      // Immediate: no quantization needed when transport is stopped.
+      if (_selectedSongTrackId == songTrackId) {
+        _immediateSongTrackDeselect();
+      } else {
+        _immediateSongTrackSelect(songTrackId);
       }
-      _state = _state.copyWith(tracks: List.unmodifiable(forceMuted));
+      return;
+    }
 
-      // Stop all other song tracks, unmute only this one.
-      final List<SongTrack> updatedSong = _songTracks.map((other) {
-        if (other.id == songTrackId) return other.copyWith(isMuted: false);
-        if (!other.isMuted) {
-          unawaited(_native?.stopSongTrackPlayback(other.id - 100));
-          return other.copyWith(isMuted: true);
+    // Quantized: stage the change; commit at loop restart.
+    _stageSongTrackChange(songTrackId);
+  }
+
+  // --- Immediate (transport stopped) ------------------------------------------
+
+  void _immediateSongTrackSelect(int songTrackId) {
+    // Save loop mute states only on first entry into song track mode.
+    if (_selectedSongTrackId == null) {
+      _savedLoopMuteStates = _state.tracks.map((t) => t.isMuted).toList();
+      _muteAllLoopTracks();
+    }
+    // Stop any previously-soloing track (no native audio when stopped).
+    _selectedSongTrackId = songTrackId;
+    _refreshSongTrackUI();
+    notifyListeners();
+  }
+
+  void _immediateSongTrackDeselect() {
+    _selectedSongTrackId = null;
+    _restoreLoopMutes();
+    // _restoreLoopMutes calls notifyListeners.
+  }
+
+  // --- Quantized (transport running) ------------------------------------------
+
+  void _stageSongTrackChange(int songTrackId) {
+    if (_pendingSongTrackChange) {
+      // A change is already staged.
+      if (_pendingSongTrackId == songTrackId) {
+        // Tapping the pending track again cancels the pending change.
+        _clearPending();
+        return;
+      }
+      // Replace with new target (or deselect if tapping the live track).
+    }
+
+    if (songTrackId == _selectedSongTrackId) {
+      // Arm the current solo for deselect.
+      _pendingSongTrackChange = true;
+      _pendingSongTrackId = null;
+    } else {
+      // Arm a new song track for solo.
+      _pendingSongTrackChange = true;
+      _pendingSongTrackId = songTrackId;
+    }
+    _refreshSongTrackUI();
+    _startArmedBlink();
+    // If the downbeat timer is not running (e.g., we are in recording state
+    // and _startPlayback was never called), start it now so the commit fires.
+    if (_songTrackDownbeatTimer == null) {
+      _startDownbeatTimer();
+    }
+    final int token = ++_songTrackScheduleToken;
+    unawaited(_schedulePendingSongTrackSwitch(token));
+    notifyListeners();
+  }
+
+  /// Called by the downbeat timer at each loop restart.
+  Future<void> _commitPendingSongTrackChange() async {
+    if (!_pendingSongTrackChange) return;
+    final int? targetId = _pendingSongTrackId;
+    _clearPending(cancelNative: false);
+
+    if (_pendingSongTrackScheduledNatively) {
+      _pendingSongTrackScheduledNatively = false;
+      if (targetId == null) {
+        if (_selectedSongTrackId != null) {
+          _selectedSongTrackId = null;
         }
-        return other;
-      }).toList(growable: false);
-      _songTracks = List<SongTrack>.unmodifiable(updatedSong);
+        _restoreLoopMutes();
+      } else {
+        if (_selectedSongTrackId == null) {
+          _savedLoopMuteStates = _state.tracks.map((t) => t.isMuted).toList();
+          _muteAllLoopTracks();
+        }
+        _selectedSongTrackId = targetId;
+        _refreshSongTrackUI();
+        notifyListeners();
+      }
+      return;
+    }
 
-      _selectedSongTrackId = songTrackId;
-      unawaited(_native?.startSongTrackPlayback(nativeIdx));
+    if (targetId == null) {
+      // Exit solo: stop playing song track, restore 6 tracks.
+      if (_selectedSongTrackId != null) {
+        unawaited(_native?.stopSongTrackPlayback(_selectedSongTrackId! - 100));
+        _selectedSongTrackId = null;
+      }
+      _restoreLoopMutes(); // calls notifyListeners
+    } else {
+      // Enter solo or switch between song tracks.
+      if (_selectedSongTrackId == null) {
+        // First entry: save and mute 6 tracks.
+        _savedLoopMuteStates = _state.tracks.map((t) => t.isMuted).toList();
+        await _muteAllLoopTracksNative();
+      } else if (_selectedSongTrackId != targetId) {
+        // Switch: stop the current track, keep 6 tracks muted.
+        unawaited(_native?.stopSongTrackPlayback(_selectedSongTrackId! - 100));
+      }
+      _selectedSongTrackId = targetId;
+      await _native?.startSongTrackPlayback(targetId - 100);
+      _refreshSongTrackUI();
       notifyListeners();
     }
   }
 
-  /// Restores loop track mute states that were saved before a song track solo.
-  void _restoreLoopMutesAfterSongTrackDeselect() {
+  void _clearPending({bool cancelNative = true}) {
+    _pendingSongTrackChange = false;
+    _pendingSongTrackId = null;
+    _songTrackScheduleToken++;
+    if (cancelNative) {
+      _pendingSongTrackScheduledNatively = false;
+      unawaited(
+        _native?.cancelScheduledSongTrackSwitch() ?? Future<void>.value(),
+      );
+    }
+    _stopArmedBlink();
+  }
+
+  Future<void> _schedulePendingSongTrackSwitch(int token) async {
+    final native = _native;
+    if (native == null) return;
+    if (!_pendingSongTrackChange) return;
+    final int? targetId = _pendingSongTrackId;
+    final int anchor = _playbackAnchorFrame ?? 0;
+    if (anchor <= 0) return;
+
+    final int spb = await native.engine.samplesPerBeat();
+    final int now = await native.engine.currentFrame();
+    final int cycleBars = _longestPopulatedBarLength();
+    final int masterCycleFrames = cycleBars * _beatsPerBar * spb;
+    if (masterCycleFrames <= 0) return;
+
+    int switchFrame =
+        anchor + (((now - anchor) ~/ masterCycleFrames) + 1) * masterCycleFrames;
+    if (switchFrame <= now) {
+      switchFrame += masterCycleFrames;
+    }
+    if (token != _songTrackScheduleToken || !_pendingSongTrackChange) return;
+
+    await native.scheduleSongTrackSwitch(
+      songTrackId: targetId == null ? -1 : targetId - 100,
+      startFrame: switchFrame,
+    );
+    if (token != _songTrackScheduleToken || !_pendingSongTrackChange) {
+      await native.cancelScheduledSongTrackSwitch();
+      return;
+    }
+    _pendingSongTrackScheduledNatively = true;
+  }
+
+  // --- Shared helpers ---------------------------------------------------------
+
+  /// Mute all loop tracks that are currently unmuted (saves gain for restore).
+  void _muteAllLoopTracks() {
+    final List<Track> muted = List<Track>.from(_state.tracks);
+    final native = _native;
+    for (int i = 0; i < muted.length; i++) {
+      final track = muted[i];
+      if (!track.isMuted) {
+        unawaited(native?.setTrackForceMuted(trackId: track.id, muted: true));
+        muted[i] = track.copyWith(isMuted: true);
+      }
+    }
+    _state = _state.copyWith(tracks: List.unmodifiable(muted));
+  }
+
+  /// Same as [_muteAllLoopTracks], but waits for the native gain updates so a
+  /// song-track start cannot race ahead of the loop-track mute at a switch.
+  Future<void> _muteAllLoopTracksNative() async {
+    final List<Track> muted = List<Track>.from(_state.tracks);
+    final native = _native;
+    for (int i = 0; i < muted.length; i++) {
+      final track = muted[i];
+      if (!track.isMuted) {
+        await native?.setTrackForceMuted(trackId: track.id, muted: true);
+        muted[i] = track.copyWith(isMuted: true);
+      }
+    }
+    _state = _state.copyWith(tracks: List.unmodifiable(muted));
+  }
+
+  /// Rebuild song track isMuted / isArmedForSolo / isArmedForDeselect flags.
+  void _refreshSongTrackUI() {
+    _songTracks = List<SongTrack>.unmodifiable(
+      _songTracks.map((st) {
+        final bool isLive = st.id == _selectedSongTrackId;
+        final bool armedSolo =
+            _pendingSongTrackChange && _pendingSongTrackId == st.id;
+        final bool armedDeselect =
+            _pendingSongTrackChange &&
+            _pendingSongTrackId == null &&
+            st.id == _selectedSongTrackId;
+        return st.copyWith(
+          isMuted: !isLive,
+          isArmedForSolo: armedSolo,
+          isArmedForDeselect: armedDeselect,
+        );
+      }).toList(growable: false),
+    );
+  }
+
+  /// Restore loop track mute states saved before entering song track solo.
+  void _restoreLoopMutes() {
     final saved = _savedLoopMuteStates;
     _savedLoopMuteStates = null;
-    if (saved == null) return;
+
+    // Clear all armed / solo flags on song tracks.
+    _songTracks = List<SongTrack>.unmodifiable(
+      _songTracks.map((st) => st.copyWith(
+            isMuted: true,
+            isArmedForSolo: false,
+            isArmedForDeselect: false,
+          )).toList(growable: false),
+    );
+
+    if (saved == null) {
+      notifyListeners();
+      return;
+    }
 
     final List<Track> restored = List<Track>.from(_state.tracks);
+    final native = _native;
     for (int i = 0; i < restored.length; i++) {
       final track = restored[i];
-      // Only restore tracks that were not muted before entering solo.
       if (track.id < saved.length && !saved[track.id]) {
-        final double restore = (_preMuteTrackOutputDb[track.id] ?? 0.0)
-            .clamp(_trackMinOutputDb, _trackMaxOutputDb);
-        _preMuteTrackOutputDb[track.id] = null;
-        _fxTrackOutputDb[track.id] = restore;
-        unawaited(
-          _native?.setTrackOutputGainDb(trackId: track.id, db: restore),
-        );
+        unawaited(native?.setTrackForceMuted(trackId: track.id, muted: false));
         restored[i] = track.copyWith(isMuted: false);
       }
     }
@@ -355,6 +542,13 @@ class LooperProvider extends ChangeNotifier {
   Future<void> clearSongTrackAudio(int songTrackId) async {
     final int nativeIdx = songTrackId - 100;
     if (nativeIdx < 0 || nativeIdx >= 3) return;
+    // If this track is currently soloing, restore loop track mutes first.
+    if (_selectedSongTrackId == songTrackId) {
+      _selectedSongTrackId = null;
+      _clearPending();
+      _restoreLoopMutes();
+    }
+    await _native?.stopSongTrackPlayback(nativeIdx);
     await _native?.clearSongTrack(nativeIdx);
     _updateSongTrack(
       songTrackId,
@@ -366,6 +560,9 @@ class LooperProvider extends ChangeNotifier {
       ),
     );
   }
+
+  /// Public alias used by the UI long-press delete on song track cards.
+  Future<void> clearSongTrack(int songTrackId) => clearSongTrackAudio(songTrackId);
 
   void _updateSongTrack(int songTrackId, SongTrack Function(SongTrack) update) {
     final int idx = songTrackId - 100;
@@ -788,11 +985,17 @@ class LooperProvider extends ChangeNotifier {
   }
 
   Future<void> stopAll() async {
+    final native = _native;
     _recordingTimer?.cancel();
     _recordingTimer = null;
     _armStartTimer?.cancel();
     _armStartTimer = null;
     _stopArmedBlink();
+    _stopDownbeatTimer();
+    _pendingSongTrackChange = false;
+    _pendingSongTrackId = null;
+    _pendingSongTrackScheduledNatively = false;
+    await native?.cancelScheduledSongTrackSwitch();
     _recordArmed = false;
     _armedTrackId = null;
     await _stopBeatListener();
@@ -817,16 +1020,20 @@ class LooperProvider extends ChangeNotifier {
 
     await _audioService.stopAll(); // also stops song track native playback
 
-    // If a song track was soloing, restore loop track mute states before we
-    // rebuild the final track list below.
-    if (_selectedSongTrackId != null) {
-      _selectedSongTrackId = null;
-      _restoreLoopMutesAfterSongTrackDeselect();
-    }
+    // Keep _selectedSongTrackId and _savedLoopMuteStates intact so that when
+    // the user presses play again the same song track resumes and loop tracks
+    // stay muted.  Just clear any pending quantized-change armed state.
+    // Native audio has already been stopped by _audioService.stopAll() above.
+    _pendingSongTrackChange = false;
+    _pendingSongTrackId = null;
 
-    // Reflect stopped state on any song track that was playing (unmuted).
+    // Clear only armed flags; preserve isMuted so the selected song track
+    // continues to show as "selected" (isMuted=false) while stopped.
     final List<SongTrack> stoppedSongTracks = _songTracks
-        .map((st) => st.isMuted ? st : st.copyWith(isMuted: true))
+        .map((st) => st.copyWith(
+              isArmedForSolo: false,
+              isArmedForDeselect: false,
+            ))
         .toList(growable: false);
     _songTracks = List<SongTrack>.unmodifiable(stoppedSongTracks);
 
@@ -1024,7 +1231,8 @@ class LooperProvider extends ChangeNotifier {
       final bool isPopulated =
           t.hasAudio ||
           t.state == TrackState.playing ||
-          t.state == TrackState.looping;
+          t.state == TrackState.looping ||
+          t.state == TrackState.recording;
       if (isPopulated && t.barLength > longest) {
         longest = t.barLength;
       }
@@ -1070,6 +1278,33 @@ class LooperProvider extends ChangeNotifier {
     _chainTargets = const [];
     _chainStartBeats = const [];
     _chainCurrentIdx = 0;
+  }
+
+  /// Start a periodic timer that fires at each master loop downbeat so pending
+  /// song track changes can be committed in sync. Must be called after the
+  /// transport starts playing, once the cycle length is known.
+  void _startDownbeatTimer() {
+    _songTrackDownbeatTimer?.cancel();
+    final int bars = _longestPopulatedBarLength();
+    final int bpm = _state.bpm;
+    final int ms = ((bars * _beatsPerBar * 60000) / bpm).round();
+    final Duration period = Duration(milliseconds: ms.clamp(250, 120000));
+    // Fire once at the next downbeat, then repeat.
+    _songTrackDownbeatTimer = Timer(period, () {
+      _onDownbeat();
+      _songTrackDownbeatTimer = Timer.periodic(period, (_) => _onDownbeat());
+    });
+  }
+
+  void _stopDownbeatTimer() {
+    _songTrackDownbeatTimer?.cancel();
+    _songTrackDownbeatTimer = null;
+  }
+
+  void _onDownbeat() {
+    if (_pendingSongTrackChange) {
+      unawaited(_commitPendingSongTrackChange());
+    }
   }
 
   /// Count-in: 4 audible clicks from the native metronome, then recording
@@ -1348,11 +1583,31 @@ class LooperProvider extends ChangeNotifier {
   }
 
   Future<void> clearAllTracks() async {
+    await clearLoopTracks();
+    // Clear all three song tracks on native side.
+    for (int i = 0; i < 3; i++) {
+      await _native?.clearSongTrack(i);
+    }
+    _songTracks = List<SongTrack>.unmodifiable([
+      SongTrack(id: 100, label: 'A'),
+      SongTrack(id: 101, label: 'B'),
+      SongTrack(id: 102, label: 'C'),
+    ]);
+    notifyListeners();
+  }
+
+  Future<void> clearLoopTracks() async {
+    final native = _native;
     _recordingTimer?.cancel();
     _recordingTimer = null;
     _armStartTimer?.cancel();
     _armStartTimer = null;
     _stopArmedBlink();
+    _stopDownbeatTimer();
+    _pendingSongTrackChange = false;
+    _pendingSongTrackId = null;
+    _pendingSongTrackScheduledNatively = false;
+    await native?.cancelScheduledSongTrackSwitch();
     _recordArmed = false;
     _armedTrackId = null;
     _suppressMetronomeClicks = false;
@@ -1372,6 +1627,11 @@ class LooperProvider extends ChangeNotifier {
     for (int i = 0; i < _preMuteTrackOutputDb.length; i++) {
       _preMuteTrackOutputDb[i] = null;
     }
+    if (native != null) {
+      for (final track in _state.tracks) {
+        await native.setTrackForceMuted(trackId: track.id, muted: false);
+      }
+    }
 
     // Abort any in-progress merge.
     _activeSongTrackId = null;
@@ -1384,11 +1644,6 @@ class LooperProvider extends ChangeNotifier {
       }
     }
 
-    // Clear all three song tracks on native side.
-    for (int i = 0; i < 3; i++) {
-      await _native?.clearSongTrack(i);
-    }
-
     final List<Track> clearedTracks = _state.tracks
         .map(
           (track) => track.copyWith(
@@ -1399,12 +1654,6 @@ class LooperProvider extends ChangeNotifier {
           ),
         )
         .toList(growable: false);
-
-    _songTracks = List<SongTrack>.unmodifiable([
-      SongTrack(id: 100, label: 'A'),
-      SongTrack(id: 101, label: 'B'),
-      SongTrack(id: 102, label: 'C'),
-    ]);
 
     _state = _state.copyWith(
       tracks: clearedTracks,
@@ -1451,6 +1700,16 @@ class LooperProvider extends ChangeNotifier {
     notifyListeners();
 
     await _playAudibleTracks(updated, resetAnchor: true);
+
+    // Start the downbeat timer so quantized song track changes fire in sync.
+    _startDownbeatTimer();
+
+    // If a song track is soloed, start its native playback now that the
+    // transport is running.
+    if (_selectedSongTrackId != null) {
+      final int nativeIdx = _selectedSongTrackId! - 100;
+      unawaited(_native?.startSongTrackPlayback(nativeIdx));
+    }
   }
 
   Future<void> _stopRecording({required bool continuePlayback}) async {
@@ -1558,6 +1817,17 @@ class LooperProvider extends ChangeNotifier {
 
     if (continuePlayback) {
       await _playAudibleTracks(updatedTracks, resetAnchor: true);
+      // Start the downbeat timer so any pending (or future) song track changes
+      // fire in sync.  _startPlayback() does this when playing from stopped,
+      // but the recording-complete path bypasses _startPlayback(), so we must
+      // start the timer here too.
+      _startDownbeatTimer();
+      // If a song track was soloed while recording, start its native playback
+      // now that the transport has fully transitioned to playing.
+      if (_selectedSongTrackId != null) {
+        final int nativeIdx = _selectedSongTrackId! - 100;
+        unawaited(_native?.startSongTrackPlayback(nativeIdx));
+      }
     } else {
       _playbackAnchorFrame = null;
     }

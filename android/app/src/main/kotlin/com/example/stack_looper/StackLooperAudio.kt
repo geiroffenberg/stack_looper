@@ -81,11 +81,16 @@ class StackLooperAudio(flutterEngine: FlutterEngine) {
         @JvmStatic external fun nativeStopTrackPlayback(trackId: Int)
         @JvmStatic external fun nativeIsTrackPlaying(trackId: Int): Boolean
         @JvmStatic external fun nativeClearTrack(trackId: Int)
+        @JvmStatic external fun nativeSetTrackForceMuted(trackId: Int, muted: Boolean)
 
         // Song tracks (A / B / C) — capture master output post-FX.
         @JvmStatic external fun nativeArmSongTrackRecording(
             songTrackId: Int, startFrame: Long, lengthFrames: Int,
         ): Boolean
+        @JvmStatic external fun nativeScheduleSongTrackSwitch(
+            songTrackId: Int, startFrame: Long,
+        )
+        @JvmStatic external fun nativeCancelScheduledSongTrackSwitch()
         @JvmStatic external fun nativeStartSongTrackPlayback(songTrackId: Int)
         @JvmStatic external fun nativeStopSongTrackPlayback(songTrackId: Int)
         @JvmStatic external fun nativeClearSongTrack(songTrackId: Int)
@@ -360,6 +365,17 @@ class StackLooperAudio(flutterEngine: FlutterEngine) {
                     if (id == null) result.error("BAD_ARGS", "clearTrack expects int", null)
                     else { nativeClearTrack(id); result.success(null) }
                 }
+                "setTrackForceMuted" -> {
+                    val args = call.arguments as? Map<*, *>
+                    val id = (args?.get("trackId") as? Number)?.toInt()
+                    val muted = args?.get("muted") as? Boolean
+                    if (id == null || muted == null) {
+                        result.error("BAD_ARGS", "setTrackForceMuted expects {trackId, muted}", null)
+                    } else {
+                        nativeSetTrackForceMuted(id, muted)
+                        result.success(null)
+                    }
+                }
                 "armSongTrackRecording" -> {
                     val args = call.arguments as? Map<*, *>
                     val songTrackId = (args?.get("songTrackId") as? Number)?.toInt()
@@ -371,6 +387,22 @@ class StackLooperAudio(flutterEngine: FlutterEngine) {
                     } else {
                         result.success(nativeArmSongTrackRecording(songTrackId, startFrame, lengthFrames))
                     }
+                }
+                "scheduleSongTrackSwitch" -> {
+                    val args = call.arguments as? Map<*, *>
+                    val songTrackId = (args?.get("songTrackId") as? Number)?.toInt()
+                    val startFrame = (args?.get("startFrame") as? Number)?.toLong()
+                    if (songTrackId == null || startFrame == null) {
+                        result.error("BAD_ARGS",
+                            "scheduleSongTrackSwitch expects {songTrackId, startFrame}", null)
+                    } else {
+                        nativeScheduleSongTrackSwitch(songTrackId, startFrame)
+                        result.success(null)
+                    }
+                }
+                "cancelScheduledSongTrackSwitch" -> {
+                    nativeCancelScheduledSongTrackSwitch()
+                    result.success(null)
                 }
                 "startSongTrackPlayback" -> {
                     val id = (call.arguments as? Number)?.toInt()

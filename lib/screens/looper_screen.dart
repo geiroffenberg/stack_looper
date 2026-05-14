@@ -32,7 +32,7 @@ class _LooperScreenState extends State<LooperScreen>
   TransportState? _lastTransportState;
   int? _lastBpm;
   int? _lastVisualDividers;
-  int? _lastSelectedSongTrackBarLength;
+  int? _lastSelectedSongTrackId;
   int? _lastLongestBarLength;
 
   @override
@@ -61,6 +61,7 @@ class _LooperScreenState extends State<LooperScreen>
           state: state,
           bpm: state.bpm,
           visualBarDividers: visualBarDividers,
+          selectedSongTrackId: provider.selectedSongTrackId,
           selectedSongTrackBarLength:
               provider.selectedSongTrackBarLength,
           longestBarLength: provider.longestPopulatedBarLength,
@@ -187,17 +188,23 @@ class _LooperScreenState extends State<LooperScreen>
                                     ),
                                     fixedSlotLabel: st.label,
                                     isSongTrack: true,
-                                    allowDelete: false,
+                                    allowDelete: true,
                                     isSelected: provider.selectedSongTrackId ==
                                         st.id,
                                     visualBarDividers: visualBarDividers,
                                     playheadProgress: st.isCapturing
                                         ? 0
                                         : songTrackProgress,
-                                    isArmed: st.isCapturing,
-                                    armedBlinkOn: st.isCapturing &&
+                                    isArmed: st.isCapturing ||
+                                        st.isArmedForSolo ||
+                                        st.isArmedForDeselect,
+                                    armedBlinkOn: (st.isCapturing ||
+                                            st.isArmedForSolo ||
+                                            st.isArmedForDeselect) &&
                                         provider.armedBlinkOn,
-                                    onDelete: () {},
+                                    armedIsRed: st.isCapturing ||
+                                        st.isArmedForSolo,
+                                    onDelete: () => provider.clearSongTrack(st.id),
                                     onToggleDelaySend: () {},
                                     onToggleReverbSend: () {},
                                     onDelaySendLevelChanged: (_) {},
@@ -238,7 +245,7 @@ class _LooperScreenState extends State<LooperScreen>
                     },
                     onToggleHeadphoneBleed: provider.toggleHeadphoneSafetyMode,
                     headphoneSafetyEnabled: provider.headphoneSafetyEnabled,
-                    onClearAll: provider.clearAllTracks,
+                    onClearAll: provider.clearLoopTracks,
                     onFxPressed: () {
                       Navigator.of(context).push(
                         MaterialPageRoute<void>(
@@ -264,6 +271,7 @@ class _LooperScreenState extends State<LooperScreen>
     required LooperState state,
     required int bpm,
     required int visualBarDividers,
+    required int? selectedSongTrackId,
     required int? selectedSongTrackBarLength,
     required int longestBarLength,
   }) {
@@ -276,8 +284,10 @@ class _LooperScreenState extends State<LooperScreen>
     final bool changedTransport = _lastTransportState != state.transportState;
     final bool changedTempo =
         _lastBpm != bpm || _lastVisualDividers != visualBarDividers;
-    final bool changedSongTrack =
-        _lastSelectedSongTrackBarLength != selectedSongTrackBarLength;
+    // Use the track ID (not bar length) so switching between same-length
+    // tracks still resets the controller, matching the native engine which
+    // always restarts the song track audio from frame 0 on selection.
+    final bool changedSongTrack = _lastSelectedSongTrackId != selectedSongTrackId;
     // Detect when the native master cycle length changes (a new recording
     // finished). The native engine resets all tracks to bar 1 at this point,
     // so we must reset the animation to 0 to stay in sync.
@@ -286,7 +296,7 @@ class _LooperScreenState extends State<LooperScreen>
     _lastTransportState = state.transportState;
     _lastBpm = bpm;
     _lastVisualDividers = visualBarDividers;
-    _lastSelectedSongTrackBarLength = selectedSongTrackBarLength;
+    _lastSelectedSongTrackId = selectedSongTrackId;
     _lastLongestBarLength = longestBarLength;
 
     if (!isPlaying && !songTrackSoloing) {

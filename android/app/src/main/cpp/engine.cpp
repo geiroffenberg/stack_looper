@@ -442,6 +442,73 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
       metronome_running_.store(true, std::memory_order_release);
     }
 
+    if (pending_song_switch_active_.load(std::memory_order_acquire)) {
+      const int64_t switch_frame =
+          pending_song_switch_frame_.load(std::memory_order_acquire);
+      if (buf_start >= switch_frame) {
+        const int32_t target =
+            pending_song_switch_target_.load(std::memory_order_acquire);
+        const bool song_mode =
+            target >= 0 && target < kMaxSongTracks;
+        for (int i = 0; i < kMaxTracks; ++i) {
+          track_force_muted_[i].store(song_mode, std::memory_order_release);
+        }
+        for (auto& st : song_tracks_) {
+          st.playing.store(false, std::memory_order_release);
+        }
+        if (song_mode) {
+          SongTrack& st = song_tracks_[target];
+          const auto state = static_cast<SongTrackState>(
+              st.state.load(std::memory_order_acquire));
+          if (state == SongTrackState::kRecorded && st.length_samples > 0) {
+            st.play_pos = 0;
+            st.playing.store(true, std::memory_order_release);
+          }
+        }
+        pending_song_switch_active_.store(false, std::memory_order_release);
+        LOGI("ApplyScheduledSongTrackSwitch: target=%d bufStart=%lld",
+             target,
+             (long long)buf_start);
+      }
+    }
+
+    // PRE-SCAN: if any recording track will complete in this buffer (i.e. its
+    // end frame falls within [buf_start, buf_end)), stop the metronome and kill
+    // the click voice BEFORE the click scheduler runs.  This prevents the
+    // coincident metronome click (the loop boundary is exactly on a beat) from
+    // being mixed into the output alongside the recorded beat-1 of the loop,
+    // which would produce an audible double-click at every loop start.
+    // We use start_frame + length_samples as the known end frame — this is set
+    // when arming and does not require inspecting the mic ring.
+    if (mic_ring_) {
+      for (const auto& t : tracks_) {
+        const auto pre_state = static_cast<TrackState>(
+            t.state.load(std::memory_order_acquire));
+        if (pre_state != TrackState::kRecording) continue;
+        const int64_t end_frame =
+            static_cast<int64_t>(t.start_frame) +
+            static_cast<int64_t>(t.length_samples);
+        if (end_frame >= buf_start && end_frame < buf_end) {
+          // Check no other track is still recording after this one completes.
+          bool another_recording = false;
+          for (const auto& other : tracks_) {
+            if (&other == &t) continue;
+            const auto os = static_cast<TrackState>(
+                other.state.load(std::memory_order_acquire));
+            if (os == TrackState::kArmed || os == TrackState::kRecording) {
+              another_recording = true;
+              break;
+            }
+          }
+          if (!another_recording) {
+            metronome_running_.store(false, std::memory_order_release);
+            click_voice_pos_ = 1 << 30;  // kill any active click voice
+          }
+          break;  // at most one track completes per buffer at normal tempos
+        }
+      }
+    }
+
     const int32_t click_len = ClickLenSamples(sample_rate_);
     const int32_t spb =
         samples_per_beat_.load(std::memory_order_relaxed);
@@ -557,6 +624,9 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
             t.playing.store(true, std::memory_order_release);
             t.state.store(static_cast<int>(TrackState::kRecorded),
                           std::memory_order_release);
+            // Metronome suppression is handled by the pre-scan above, which
+            // runs before the click scheduler so the coincident boundary click
+            // is killed before it enters the output buffer.
           }
         }
       }
@@ -578,6 +648,8 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
       const int32_t len = t.length_samples;
       if (len <= 0) continue;  // nothing recorded yet
       const int track_id = static_cast<int>(&t - &tracks_[0]);
+      const bool force_muted =
+        track_force_muted_[track_id].load(std::memory_order_acquire);
       const float gain_target =
           track_output_gain_target_[track_id].load(std::memory_order_acquire);
       float gain = track_output_gain_smoothed_[track_id];
@@ -591,6 +663,10 @@ oboe::DataCallbackResult Engine::onAudioReady(oboe::AudioStream* stream,
       const float* src = t.buffer.data();
       for (int32_t i = 0; i < num_frames; ++i) {
         gain += (gain_target - gain) * kTrackGainSmoothing;
+        if (force_muted) {
+          if (++pos >= len) pos = 0;
+          continue;
+        }
         const float sample = src[pos] * gain;
         out[i] += sample;
         if (delay_send_level > 0.0001f) {
@@ -953,6 +1029,14 @@ float Engine::TrackOutputGainDb(int32_t track_id) const {
   return 20.0f * std::log10(safe);
 }
 
+ void Engine::SetTrackForceMuted(int32_t track_id, bool muted) {
+   if (track_id < 0 || track_id >= kMaxTracks) return;
+   track_force_muted_[track_id].store(muted, std::memory_order_release);
+   LOGI("SetTrackForceMuted: track=%d muted=%s",
+        track_id,
+        muted ? "true" : "false");
+ }
+
 void Engine::SetTrackDelaySendLevel(int32_t track_id, float level) {
   if (track_id < 0 || track_id >= kMaxTracks) return;
   const float clamped = Clamp01(level);
@@ -1264,6 +1348,21 @@ bool Engine::ArmSongTrackRecording(int32_t song_track_id,
   return true;
 }
 
+void Engine::ScheduleSongTrackSwitch(int32_t song_track_id,
+                                     int64_t start_frame) {
+  pending_song_switch_target_.store(song_track_id, std::memory_order_release);
+  pending_song_switch_frame_.store(start_frame, std::memory_order_release);
+  pending_song_switch_active_.store(true, std::memory_order_release);
+  LOGI("ScheduleSongTrackSwitch: target=%d startFrame=%lld",
+       song_track_id,
+       (long long)start_frame);
+}
+
+void Engine::CancelScheduledSongTrackSwitch() {
+  pending_song_switch_active_.store(false, std::memory_order_release);
+  LOGI("CancelScheduledSongTrackSwitch");
+}
+
 void Engine::StartSongTrackPlayback(int32_t song_track_id) {
   if (song_track_id < 0 || song_track_id >= kMaxSongTracks) return;
   SongTrack& st = song_tracks_[song_track_id];
@@ -1441,22 +1540,22 @@ bool Engine::RenderMixToSongTrack(int32_t song_track_id,
   const float reverb_lp_coeff = 0.02f + ((1.0f - reverb_damping) * 0.10f);
   const float reverb_wet_gain = 0.34f + reverb_room_size * 0.28f;
 
-  // ── Snapshot track play positions so render is phase-coherent ────────
-  // We read each track's current play_pos atomically before the render loop.
-  // The render loop then reads sequentially from that offset, wrapping at
-  // length_samples.  The audio callback advances its own copy of play_pos
-  // independently — the two never conflict.
+  // ── Track play positions: always render from the start of the loop ───
+  // We NEVER snapshot the live play_pos here.  The song track must start at
+  // frame 0 of every loop track so it is perfectly phase-aligned when played
+  // back alongside the loop tracks, regardless of when the user pressed the
+  // merge button.  Each track wraps independently at its own length_samples.
+  // The audio callback's own copy of play_pos is unaffected.
   std::array<int32_t, kMaxTracks> track_play_pos{};
-  for (int i = 0; i < kMaxTracks; ++i) {
-    track_play_pos[i] = tracks_[i].play_pos;  // audio-thread field, read-only here
-  }
+  // Zero-initialised above — all tracks start at position 0.
 
-  // Smoothed gain state per track (start from current smoothed value snapshot).
+  // Smoothed gain state: start from the target gain, not the live smoothed
+  // value, so the song track buffer has no ramp-in artefact at frame 0.
   std::array<float, kMaxTracks> track_gain_smoothed{};
   for (int i = 0; i < kMaxTracks; ++i) {
-    track_gain_smoothed[i] = track_output_gain_smoothed_[i];  // read-only
+    track_gain_smoothed[i] = track_gain[i];
   }
-  float master_gain_smoothed = master_output_gain_smoothed_;  // read-only
+  float master_gain_smoothed = master_gain;
 
   // ── Process chunk size ────────────────────────────────────────────────
   constexpr int32_t kChunkSize = 256;
@@ -1474,11 +1573,17 @@ bool Engine::RenderMixToSongTrack(int32_t song_track_id,
     std::fill_n(delay_scratch.data(), n, 0.0f);
     std::fill_n(reverb_scratch.data(), n, 0.0f);
 
-    // Step 4: mix playing loop tracks.
+    // Step 4: mix loop tracks that have recorded audio.
+    // We check state == kRecorded, NOT the playing flag — the user may have
+    // stopped playback before pressing merge, which sets playing=false but
+    // leaves the recorded audio intact.  We always want to render from the
+    // full recorded buffer regardless of transport state.
     constexpr float kGainSmoothing = 0.0025f;
     for (int t_id = 0; t_id < kMaxTracks; ++t_id) {
       const Track& t = tracks_[t_id];
-      if (!t.playing.load(std::memory_order_acquire)) continue;
+      const auto t_state = static_cast<TrackState>(
+          t.state.load(std::memory_order_acquire));
+      if (t_state != TrackState::kRecorded) continue;
       const int32_t len = t.length_samples;
       if (len <= 0) continue;
       const float g_target = track_gain[t_id];
